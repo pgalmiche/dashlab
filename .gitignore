@@ -1,0 +1,7 @@
+**/__pycache__
+**/.ipynb_checkpoints
+**/my_secret.txt
+**/mongo_data/
+**/uploaded_files/
+**/.env
+**/flask_session

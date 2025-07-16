@@ -1,0 +1,17 @@
+image: python:3.10-slim
+
+stages:
+  - deploy
+
+pages:
+  # tags:
+  #   - sphinx
+  stage: deploy
+  script:
+    - python3 -m pip install sphinx sphinx_rtd_theme sphinx-tabs myst_parser
+    - sphinx-build docs/src/ public/
+  artifacts:
+    paths:
+      - public
+  only:
+    - main

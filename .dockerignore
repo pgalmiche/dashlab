@@ -1,0 +1,9 @@
+.env
+uploaded_files/
+docker-compose.yml
+Dockerfile.dev
+.dockerignore
+mongo_data/
+README.md
+**/__pycache__/
+**/flask_session

@@ -1,0 +1,40 @@
+services:
+  python-dashboard:
+    container_name: dashboard-python
+    build:
+      context: ".."
+      dockerfile: ./docker/dev.Dockerfile
+    command: python3 -m app.main
+    volumes:
+      - code_directory:/usr/src/app/:rw
+    ports:
+      - 7777:7777
+    networks:
+      - mynetwork # Attach to 'mynetwork'
+    env_file:
+      - "../.env"
+
+  mongo:
+    image: mongo:latest # Official MongoDB image
+    container_name: mongo_db
+    restart: always
+    env_file:
+      - "../.env"
+    ports:
+      - "27017:27017" # Expose MongoDB default port
+    volumes:
+      - ../mongo_data:/data/db
+    networks:
+      - mynetwork # Attach to 'mynetwork'
+
+volumes:
+  code_directory:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ../
+
+networks:
+  mynetwork:
+    driver: bridge # Use bridge networking
