@@ -1,12 +1,14 @@
-FROM python:3.10-slim
+FROM python:3.12-slim
 
-
-# use poetry for dependencies management
-COPY pyproject.toml ./
-RUN pip3 install poetry
-RUN poetry config virtualenvs.create false
-RUN poetry install -n --no-ansi
+# Copy uv binaries from official uv image (faster, no pip install)
+COPY --from=ghcr.io/astral-sh/uv:0.7.21 /uv /uvx /bin/
 
 WORKDIR /usr/src/app
+
+# Copy dependency files to install deps (before mounting source)
+COPY pyproject.toml ./
+
+# Install main + dev dependencies for local dev
+RUN uv pip install -r pyproject.toml --system
 
 

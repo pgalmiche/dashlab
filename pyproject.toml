@@ -1,37 +1,39 @@
-[tool.poetry]
+[project]
 name = "DashLab"
 version = "1.0.0"
 description = "Dashboard made to call various personnal API and showcase some projects."
-authors = ["Pierre Galmiche"]
-license = "MIT"
-readme = "./README.md"
-package-mode = false
-# package mode set to false only to build without venv
+authors = [{name = "Pierre Galmiche"}]
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.11"
 
-[tool.poetry.dependencies]
-python = "^3.10"
-plotly = "5.13.0"
-flask = "*"
-dash = "2.8.1"
-dash-bootstrap-components = "1.3.1"
-pandas = "*"
-scikit-learn = "*"
-pymongo = "*"
-boto3 = "*"
-python-dotenv = "*"
-gunicorn = "*"
-flask-session = "*"
-requests-oauthlib = "*"
-PyJWT = "*"
-pydantic = "*"
+dependencies = [
+  "setuptools<81",
+  "plotly==5.13.0",
+  "flask",
+  "dash==2.8.1",
+  "dash-bootstrap-components==1.3.1",
+  "pandas",
+  "scikit-learn",
+  "pymongo",
+  "boto3",
+  "python-dotenv",
+  "gunicorn",
+  "flask-session",
+  "requests-oauthlib",
+  "PyJWT",
+  "pydantic",
+  "pydantic-settings",
+]
 
-[tool.poetry.group.dev.dependencies]
-icecream = "^2.1.3"
-# for the documentation
-sphinx = { version = "<7.0.0" }
-sphinx-rtd-theme = "*"
-sphinx-tabs = "*"
+[project.optional-dependencies]
+dev = [
+  "icecream>=2.1.3",
+  "sphinx<7.0.0",
+  "sphinx-rtd-theme",
+  "sphinx-tabs",
+]
 
 [build-system]
-requires = ["poetry-core"]
-build-backend = "poetry.core.masonry.api"
+requires = ["setuptools>=42", "wheel"]
+build-backend = "setuptools.build_meta"
