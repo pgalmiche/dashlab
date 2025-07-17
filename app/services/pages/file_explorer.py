@@ -13,15 +13,24 @@ from dash.exceptions import PreventUpdate
 from dotenv import load_dotenv
 from pymongo import MongoClient
 
+from config.settings import settings
+
 dash.register_page(
     __name__, path="/file-explorer", name=("MongoDB File Explorer",), order=2
 )
 
-# MongoDB connection settings
-MONGO_URI = "mongodb://mongo_admin:StrongPassword123!@mongo_db:27017/mydatabase?authSource=admin"
-client = MongoClient(MONGO_URI)
-db = client.get_database()
-collection = db["file_metadata"]
+MONGO_URI = (
+    f"mongodb://{settings.mongo_initdb_root_username}:"
+    f"{settings.mongo_initdb_root_password}@mongo_db:27017/"
+    f"{settings.mongo_initdb_database}?authSource=admin"
+)
+
+
+def get_collection():
+    client = MongoClient(MONGO_URI)
+    db = client.get_database()
+    return db["file_metadata"]
+
 
 # Folder to store uploaded files
 UPLOAD_FOLDER = "./uploaded_files/"
@@ -124,6 +133,7 @@ def save_file(decoded_content, filename, storage_option):
 
 # Function to store metadata in MongoDB
 def store_file_metadata(file_path, tags):
+    collection = get_collection()
     file_entry = {
         "file_path": file_path,
         "tags": tags,
@@ -149,6 +159,7 @@ def delete_file_locally(file_path):
 
 # Function to delete files based on their path (local or S3)
 def delete_entries_by_path(paths_to_delete):
+    collection = get_collection()
     for file_path in paths_to_delete:
         if file_path.startswith("https://"):  # S3 file
             filename = file_path.split("/")[-1]
@@ -161,6 +172,7 @@ def delete_entries_by_path(paths_to_delete):
 
 # Fetch all file metadata from MongoDB
 def fetch_all_files():
+    collection = get_collection()
     return list(collection.find({}, {"_id": 0}))
 
 
