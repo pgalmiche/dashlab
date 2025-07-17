@@ -1,5 +1,3 @@
-import os
-
 import jwt
 from dash import Dash, dcc, html, page_container, page_registry
 from dash.dependencies import Input, Output
@@ -9,34 +7,20 @@ from requests_oauthlib import OAuth2Session
 from config.settings import settings
 from flask_session import Session
 
+# Constants
 DEBUG_MODE = settings.debug
 DASH_ENV = settings.env
-
-# # Config & ENV
-# DEBUG_MODE = os.getenv("DASH_DEBUG", "False").lower() == "true"
-# DASH_ENV = os.getenv("DASH_ENV", "development")
-
-COGNITO_CLIENT_ID = os.getenv("COGNITO_CLIENT_ID")
-COGNITO_CLIENT_SECRET = os.getenv("COGNITO_CLIENT_SECRET")
-COGNITO_DOMAIN = os.getenv(
-    "COGNITO_DOMAIN"
-)  # e.g. myapp.auth.eu-west-3.amazoncognito.com
-COGNITO_REDIRECT_URI = os.getenv(
-    "COGNITO_REDIRECT_URI"
-)  # e.g. http://localhost:7777/callback
-COGNITO_LOGOUT_URI = os.getenv("COGNITO_LOGOUT_URI", "http://localhost:7777")
 COGNITO_SCOPE = ["openid", "email", "profile"]
-SECRET_KEY = os.getenv("SECRET_KEY", "dev_key")
 
 # OAuth URLs
-AUTHORIZATION_BASE_URL = f"https://{COGNITO_DOMAIN}/oauth2/authorize"
-TOKEN_URL = f"https://{COGNITO_DOMAIN}/oauth2/token"
-USERINFO_URL = f"https://{COGNITO_DOMAIN}/oauth2/userInfo"
-LOGOUT_URL = f"https://{COGNITO_DOMAIN}/logout"
+AUTHORIZATION_BASE_URL = f"https://{settings.cognito_domain}/oauth2/authorize"
+TOKEN_URL = f"https://{settings.cognito_domain}/oauth2/token"
+USERINFO_URL = f"https://{settings.cognito_domain}/oauth2/userInfo"
+LOGOUT_URL = f"https://{settings.cognito_domain}/logout"
 
 # Flask setup
 server = Flask(__name__)
-server.secret_key = SECRET_KEY
+server.secret_key = settings.secret_key
 server.config["SESSION_TYPE"] = "filesystem"
 Session(server)
 
@@ -49,8 +33,8 @@ def health_check():
 # Cognito OAuth
 def get_cognito():
     return OAuth2Session(
-        client_id=COGNITO_CLIENT_ID,
-        redirect_uri=COGNITO_REDIRECT_URI,
+        client_id=settings.cognito_client_id,
+        redirect_uri=settings.cognito_redirect_uri,
         scope=COGNITO_SCOPE,
     )
 
@@ -68,7 +52,7 @@ def callback():
     token = cognito.fetch_token(
         TOKEN_URL,
         authorization_response=request.url,
-        client_secret=COGNITO_CLIENT_SECRET,
+        client_secret=settings.cognito_client_secret,
     )
     session["oauth_token"] = token
 
@@ -88,12 +72,10 @@ def logout():
     return redirect("/")
 
 
-# Check if user is authenticated (i.e., session contains valid data)
 def is_logged_in():
     return "oauth_token" in session and "user" in session
 
 
-# Check if authenticated user is approved (based on custom attribute)
 def is_approved():
     if is_logged_in():
         user = session["user"]
@@ -101,7 +83,6 @@ def is_approved():
     return False
 
 
-# Optional: Combine both if needed
 def is_logged_in_and_approved():
     return is_logged_in() and is_approved()
 
@@ -109,27 +90,23 @@ def is_logged_in_and_approved():
 @server.before_request
 def require_login():
     exact_allowed_paths = {
-        "/",  # home page (public)
+        "/",
         "/login",
         "/callback",
         "/logout",
         "/health",
     }
-    prefix_allowed_paths = (
-        "/_dash",  # Dash assets
-        "/assets",  # static assets
-    )
+    prefix_allowed_paths = ("/_dash", "/assets")
 
     if request.path in exact_allowed_paths or any(
         request.path.startswith(p) for p in prefix_allowed_paths
     ):
-        return  # allow access to these paths without login
+        return
 
     if not is_logged_in_and_approved():
         return redirect("/login")
 
 
-# Dash app setup
 external_css = [
     "https://cdn.jsdelivr.net/npm/bootstrap@5.3.1/dist/css/bootstrap.min.css",
 ]
@@ -161,8 +138,8 @@ def generate_pages_links():
             className="nav-link",
             style={
                 "padding": "0 10px",
-                "fontSize": "1.1rem",  # or "18px"
-                "fontWeight": "500",  # optional: makes text slightly bolder
+                "fontSize": "1.1rem",
+                "fontWeight": "500",
             },
         )
         for page in page_registry.values()
@@ -189,12 +166,8 @@ def navbar():
             "cursor": "pointer",
         },
     )
-    pages_links = generate_pages_links()
-
-    # Wrap links inside <ul class="navbar-nav ms-auto"> and each link inside <li class="nav-item">
-    nav_items = [html.Li(link, className="nav-item") for link in pages_links] + [
-        html.Li(logout_link, className="nav-item")
-    ]
+    nav_items = [html.Li(link, className="nav-item") for link in generate_pages_links()]
+    nav_items.append(html.Li(logout_link, className="nav-item"))
 
     return html.Nav(
         className="navbar navbar-expand-lg bg-dark fixed-top",
@@ -217,13 +190,10 @@ def navbar():
                         children=html.Span(className="navbar-toggler-icon"),
                     ),
                     html.Div(
-                        className="collapse navbar-collapse justify-content-left",  # centers nav links
+                        className="collapse navbar-collapse justify-content-left",
                         id="navbarSupportedContent",
                         children=[
-                            html.Ul(
-                                nav_items,
-                                className="navbar-nav mb-2 mb-lg-0",  # mx-auto centers the list
-                            ),
+                            html.Ul(nav_items, className="navbar-nav mb-2 mb-lg-0"),
                         ],
                     ),
                 ],
@@ -234,7 +204,7 @@ def navbar():
 
 app.layout = html.Div(
     [
-        dcc.Location(id="url", refresh=False),  # track URL for callback
+        dcc.Location(id="url", refresh=False),
         html.Div(id="navbar-container", className="fixed-top"),
         html.Div(
             [
@@ -251,12 +221,6 @@ app.layout = html.Div(
 
 @app.callback(Output("navbar-container", "children"), Input("url", "pathname"))
 def update_navbar(pathname):
-    # Only show navbar if logged in
     if is_logged_in_and_approved():
         return navbar()
     return None
-
-
-# Run locally only in development mode
-if __name__ == "__main__" and settings.env == "development":
-    app.run(host="0.0.0.0", port=7777, debug=DEBUG_MODE)
