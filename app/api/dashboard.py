@@ -6,11 +6,15 @@ from dash.dependencies import Input, Output
 from flask import Flask, redirect, request, session
 from requests_oauthlib import OAuth2Session
 
+from config.settings import settings
 from flask_session import Session
 
-# Config & ENV
-DEBUG_MODE = os.getenv("DASH_DEBUG", "False").lower() == "true"
-DASH_ENV = os.getenv("DASH_ENV", "development")
+DEBUG_MODE = settings.debug
+DASH_ENV = settings.env
+
+# # Config & ENV
+# DEBUG_MODE = os.getenv("DASH_DEBUG", "False").lower() == "true"
+# DASH_ENV = os.getenv("DASH_ENV", "development")
 
 COGNITO_CLIENT_ID = os.getenv("COGNITO_CLIENT_ID")
 COGNITO_CLIENT_SECRET = os.getenv("COGNITO_CLIENT_SECRET")
@@ -254,5 +258,5 @@ def update_navbar(pathname):
 
 
 # Run locally only in development mode
-if __name__ == "__main__" and DASH_ENV == "development":
+if __name__ == "__main__" and settings.env == "development":
     app.run(host="0.0.0.0", port=7777, debug=DEBUG_MODE)

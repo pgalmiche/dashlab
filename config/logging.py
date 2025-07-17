@@ -7,7 +7,7 @@ from config.settings import settings  # Your settings module
 
 def setup_logging():
     """Configure logging for the application."""
-    log_level = "DEBUG" if settings.DEBUG else "INFO"
+    log_level = "DEBUG" if settings.debug else "INFO"
 
     logging_config = {
         "version": 1,
