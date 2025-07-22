@@ -10,9 +10,9 @@ layout = html.Div(
         html.Div(
             className="container py-5",
             children=[
-                html.H1("Welcome to Dash Lab 👋", className="fw-bold mb-3"),
+                html.H1("Welcome to DashLab 👋", className="fw-bold mb-3"),
                 html.P(
-                    "Dash Lab is a personal space for experimenting with data science tools, models, "
+                    "DashLab is a personal space for experimenting with data science tools, models, "
                     "and visualizations using Plotly Dash.",
                     className="lead",
                 ),
@@ -49,13 +49,6 @@ layout = html.Div(
                 html.H2("Available Sections", className="h4 mt-4 mb-3"),
                 html.Ul(
                     [
-                        html.Li(
-                            html.A(
-                                "🍷 Wine Demo",
-                                href="/wine_demo",
-                                className="link-primary",
-                            )
-                        ),
                         html.Li(
                             html.A(
                                 "📁 File Explorer",

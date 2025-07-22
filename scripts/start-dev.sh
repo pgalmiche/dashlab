@@ -1,3 +1,3 @@
 #!/bin/bash
-docker compose -f docker/compose.dev.yml up --build python-dashboard
+docker compose -f docker/compose.dev.yml up --build python-dashboard mongo
 

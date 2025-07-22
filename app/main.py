@@ -9,5 +9,5 @@ import logging
 logger = logging.getLogger(__name__)
 
 if __name__ == "__main__" and settings.env == "development":
+    logger.info("App starting...")
     app.run(host="0.0.0.0", port=7777, debug=settings.debug)
-    logger.info("App started")

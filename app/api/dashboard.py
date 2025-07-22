@@ -42,7 +42,8 @@ def get_cognito():
 @server.route("/login")
 def login():
     cognito = get_cognito()
-    authorization_url, _ = cognito.authorization_url(AUTHORIZATION_BASE_URL)
+    authorization_url, state = cognito.authorization_url(AUTHORIZATION_BASE_URL)
+    session["oauth_state"] = state  # store the state
     return redirect(authorization_url)
 
 
@@ -53,6 +54,7 @@ def callback():
         TOKEN_URL,
         authorization_response=request.url,
         client_secret=settings.cognito_client_secret,
+        state=session.get("oauth_state"),  # validate the state here
     )
     session["oauth_token"] = token
 
@@ -148,10 +150,12 @@ def generate_pages_links():
 
 def navbar():
     img_tag = html.Img(
-        src="assets/PG.png", width=27, className="d-inline-block align-text-middle me-2"
+        src="assets/PG.png",
+        width=27,
+        className="d-inline-block align-text-middle me-2",
     )
     brand_link = dcc.Link(
-        [img_tag, "Dash Lab"],
+        [img_tag, "DashLab"],
         href="/",
         className="navbar-brand d-flex align-items-center",
     )

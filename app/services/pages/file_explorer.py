@@ -12,12 +12,18 @@ from dash.dependencies import Input, Output, State
 from dash.exceptions import PreventUpdate
 from dotenv import load_dotenv
 from pymongo import MongoClient
+from pymongo.errors import ServerSelectionTimeoutError
+
+from config.logging import setup_logging
+
+setup_logging()
+import logging
+
+logger = logging.getLogger(__name__)
 
 from config.settings import settings
 
-dash.register_page(
-    __name__, path="/file-explorer", name=("MongoDB File Explorer",), order=2
-)
+dash.register_page(__name__, path="/file-explorer", name="S3 File Explorer", order=1)
 
 MONGO_URI = (
     f"mongodb://{settings.mongo_initdb_root_username}:"
@@ -27,15 +33,15 @@ MONGO_URI = (
 
 
 def get_collection():
-    client = MongoClient(MONGO_URI)
-    db = client.get_database()
-    return db["file_metadata"]
+    try:
+        client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
+        client.admin.command("ping")
+        db = client.get_database()
+        return db["file_metadata"]
+    except ServerSelectionTimeoutError:
+        logger.info("Warning: Could not connect to MongoDB.")
+        return None
 
-
-# Folder to store uploaded files
-UPLOAD_FOLDER = "./uploaded_files/"
-if not os.path.exists(UPLOAD_FOLDER):
-    os.makedirs(UPLOAD_FOLDER)
 
 # AWS S3 Configuration
 S3_BUCKET_NAME = "personnal-files-pg"
@@ -57,22 +63,43 @@ s3_client = boto3.client(
     region_name=AWS_REGION,
 )
 
+
+# Helper: List existing folders in S3 bucket
+def list_s3_folders():
+    try:
+        response = s3_client.list_objects_v2(Bucket=S3_BUCKET_NAME, Delimiter="/")
+        prefixes = response.get("CommonPrefixes", [])
+        folders = [p["Prefix"].rstrip("/") for p in prefixes]
+        return folders
+    except Exception as e:
+        logger.error(f"Failed to list S3 folders: {e}")
+        return []
+
+
 # Layout of the page
 layout = html.Div(
     [
         html.H2("Upload Files"),
-        # Storage Option (Local or S3)
-        html.Label("Storage Option:"),
+        html.Label("Storage is done on S3 buckets:"),
         html.Br(),
         html.Br(),
-        dcc.RadioItems(
-            id="storage-option",
-            options=[
-                {"label": "Local Storage", "value": "local"},
-                {"label": "Amazon S3", "value": "s3"},
-            ],
-            value="local",  # Default to local
-            inline=True,
+        # Dropdown for existing folders
+        html.Label("Select Existing Folder:"),
+        dcc.Dropdown(
+            id="folder-dropdown",
+            options=[{"label": f, "value": f} for f in list_s3_folders()],
+            placeholder="Select a folder (optional)",
+            clearable=True,
+            style={"width": "300px"},
+        ),
+        html.Br(),
+        # Or input new folder name
+        html.Label("Or Create New Folder:"),
+        dcc.Input(
+            id="new-folder-name",
+            type="text",
+            placeholder="Enter new folder name (optional)",
+            style={"width": "300px"},
         ),
         html.Br(),
         html.Br(),
@@ -117,23 +144,25 @@ layout = html.Div(
 )
 
 
-# Function to save file locally or upload to S3
-def save_file(decoded_content, filename, storage_option):
-    if storage_option == "local":
-        save_path = os.path.join(UPLOAD_FOLDER, filename)
-        with open(save_path, "wb") as f:
-            f.write(decoded_content)
-        return save_path  # Return local path
+# Function to save file to S3 with optional folder prefix
+def save_file(decoded_content, filename, folder_name=None):
+    if folder_name:
+        folder_name = folder_name.strip().strip("/")
+        key = f"{folder_name}/{filename}"
+    else:
+        key = filename
 
-    elif storage_option == "s3":
-        s3_client.put_object(Bucket=S3_BUCKET_NAME, Key=filename, Body=decoded_content)
-        s3_url = f"https://{S3_BUCKET_NAME}.s3.{AWS_REGION}.amazonaws.com/{filename}"
-        return s3_url  # Return S3 URL
+    s3_client.put_object(Bucket=S3_BUCKET_NAME, Key=key, Body=decoded_content)
+    s3_url = f"https://{S3_BUCKET_NAME}.s3.{AWS_REGION}.amazonaws.com/{key}"
+    return s3_url
 
 
 # Function to store metadata in MongoDB
 def store_file_metadata(file_path, tags):
     collection = get_collection()
+    if collection is None:
+        logger.info("Skipping metadata storage: no DB connection.")
+        return
     file_entry = {
         "file_path": file_path,
         "tags": tags,
@@ -146,26 +175,23 @@ def store_file_metadata(file_path, tags):
 def delete_file_from_s3(filename):
     try:
         s3_client.delete_object(Bucket=S3_BUCKET_NAME, Key=filename)
-        print(f"Deleted {filename} from S3.")
+        logger.info(f"Deleted {filename} from S3.")
     except Exception as e:
-        print(f"Error deleting {filename} from S3: {e}")
+        logger.error(f"Error deleting {filename} from S3: {e}")
 
 
-# Function to delete files locally
-def delete_file_locally(file_path):
-    if os.path.exists(file_path):
-        os.remove(file_path)
-
-
-# Function to delete files based on their path (local or S3)
+# Function to delete files based on their path (S3 only now)
 def delete_entries_by_path(paths_to_delete):
     collection = get_collection()
+    if collection is None:
+        logger.info("Skipping metadata storage: no DB connection.")
+        return
     for file_path in paths_to_delete:
-        if file_path.startswith("https://"):  # S3 file
-            filename = file_path.split("/")[-1]
+        if file_path.startswith("https://"):
+            filename = "/".join(file_path.split("/")[3:])  # Remove domain and bucket
             delete_file_from_s3(filename)
         else:
-            delete_file_locally(file_path)
+            logger.warning(f"Invalid file path for deletion: {file_path}")
 
     collection.delete_many({"file_path": {"$in": paths_to_delete}})
 
@@ -173,6 +199,9 @@ def delete_entries_by_path(paths_to_delete):
 # Fetch all file metadata from MongoDB
 def fetch_all_files():
     collection = get_collection()
+    if collection is None:
+        logger.info("Skipping metadata storage: no DB connection.")
+        return []
     return list(collection.find({}, {"_id": 0}))
 
 
@@ -187,41 +216,49 @@ def fetch_all_files():
     Input("upload-files", "contents"),
     State("upload-files", "filename"),
     State("file-tags", "value"),
-    State("storage-option", "value"),  # New: Local or S3
+    State("folder-dropdown", "value"),
+    State("new-folder-name", "value"),
 )
-def upload_files(files_contents, filenames, tags, storage_option):
-    if files_contents:
-        status_messages = []
+def upload_files(files_contents, filenames, tags, selected_folder, new_folder):
+    if files_contents is None:
+        raise PreventUpdate
 
-        for content, filename in zip(files_contents, filenames):
-            content_type, content_string = content.split(",")
-            decoded = base64.b64decode(content_string)
+    # Decide which folder to use
+    folder_to_use = None
+    if new_folder and new_folder.strip():
+        folder_to_use = new_folder.strip()
+    elif selected_folder:
+        folder_to_use = selected_folder
 
-            # Save file (locally or to S3)
-            file_path = save_file(decoded, filename, storage_option)
+    status_messages = []
 
-            # Store metadata in MongoDB
-            store_file_metadata(file_path, tags.split(",") if tags else [])
+    for content, filename in zip(files_contents, filenames):
+        content_type, content_string = content.split(",")
+        decoded = base64.b64decode(content_string)
 
-            status_messages.append(f"File '{filename}' uploaded successfully!")
+        # Save file in chosen folder
+        file_path = save_file(decoded, filename, folder_to_use)
 
-        # Fetch all uploaded files from MongoDB
-        uploaded_files = fetch_all_files()
+        # Store metadata in MongoDB
+        store_file_metadata(file_path, tags.split(",") if tags else [])
 
-        return (
-            status_messages,
-            f"Tags for the file(s): {tags}",
-            html.Ul(
-                [
-                    html.Li(
-                        f"File: {file['file_path']} | Tags: {', '.join(file['tags'])} | Uploaded on: {file['timestamp']}"
-                    )
-                    for file in uploaded_files
-                ]
-            ),
-        )
+        status_messages.append(f"File '{filename}' uploaded successfully!")
 
-    return "", "", ""
+    # Fetch all uploaded files from MongoDB
+    uploaded_files = fetch_all_files()
+
+    return (
+        status_messages,
+        f"Tags for the file(s): {tags}",
+        html.Ul(
+            [
+                html.Li(
+                    f"File: {file['file_path']} | Tags: {', '.join(file['tags'])} | Uploaded on: {file['timestamp']}"
+                )
+                for file in uploaded_files
+            ]
+        ),
+    )
 
 
 # Callback to display and delete database entries
@@ -236,7 +273,6 @@ def display_and_delete_entries(delete_clicks, refresh_clicks, paths_input):
     if not entries:
         return "No entries found in the database."
 
-    # Convert MongoDB data to a format compatible with DataTable
     df_data = [
         {
             "File Path": entry.get("file_path", "N/A"),
@@ -252,8 +288,8 @@ def display_and_delete_entries(delete_clicks, refresh_clicks, paths_input):
             {"name": "Tags", "id": "Tags"},
             {"name": "Upload Time", "id": "Upload Time"},
         ],
-        data=df_data,  # Data to display
-        style_table={"overflowX": "auto"},  # Responsive table
+        data=df_data,
+        style_table={"overflowX": "auto"},
         style_header={
             "backgroundColor": "black",
             "color": "white",
@@ -262,17 +298,13 @@ def display_and_delete_entries(delete_clicks, refresh_clicks, paths_input):
         },
         style_cell={"textAlign": "left", "padding": "5px"},
         style_data_conditional=[
-            {
-                "if": {"row_index": "odd"},
-                "backgroundColor": "#f9f9f9",
-            }
+            {"if": {"row_index": "odd"}, "backgroundColor": "#f9f9f9"}
         ],
-        page_size=10,  # Pagination (10 rows per page)
-        sort_action="native",  # Enable sorting
-        filter_action="native",  # Enable filtering
+        page_size=10,
+        sort_action="native",
+        filter_action="native",
     )
 
-    # Handle deletions
     if delete_clicks > 0 and paths_input:
         paths_to_delete = [path.strip() for path in paths_input.split(",")]
 
@@ -286,6 +318,6 @@ def display_and_delete_entries(delete_clicks, refresh_clicks, paths_input):
             )
 
     if refresh_clicks > 0:
-        return table  # Refresh the table
+        return table
 
-    return table  # Initially render the table
+    return table
