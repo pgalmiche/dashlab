@@ -137,104 +137,132 @@ def list_s3_folders() -> List[str]:
 # Page layout definition
 layout = html.Div(
     [
-        html.H2("Upload Files"),
-        html.Label("Storage is done on S3 buckets:"),
-        html.Br(),
-        html.Br(),
-        html.Label("Select Existing Folder:"),
-        dcc.Dropdown(
-            id="folder-dropdown",
-            options=[{"label": f, "value": f} for f in list_s3_folders()],
-            placeholder="Select a folder (optional)",
-            clearable=True,
-            style={"width": "300px"},
-        ),
-        html.Br(),
-        html.Label("Or Create New Folder:"),
-        dcc.Input(
-            id="new-folder-name",
-            type="text",
-            placeholder="Enter new folder name (optional)",
-            style={"width": "300px"},
-        ),
-        html.Br(),
-        html.Br(),
-        dcc.Input(
-            id="file-tags", type="text", placeholder="Enter tags (comma-separated)"
-        ),
-        html.Br(),
-        html.Br(),
-        dcc.Upload(
-            id="upload-files", children=html.Button("Upload File"), multiple=True
-        ),
-        html.Br(),
-        html.Div(id="upload-status"),
-        html.Div(id="tags-status"),
-        html.Div(id="uploaded-files-list"),
-        html.Br(),
-        html.Br(),
-        html.H3("Database Entries"),
-        html.Div(id="database-entries-list"),
-        html.Label("Enter file paths to Delete (comma-separated):"),
-        html.Br(),
-        html.Br(),
-        dcc.Input(
-            id="delete-paths-input",
-            type="text",
-            placeholder="Enter file paths to delete",
-        ),
-        html.Br(),
-        html.Br(),
-        html.Button("Delete Selected Entries", id="delete-btn", n_clicks=0),
-        html.Br(),
-        html.Br(),
-        html.Button("Refresh Table", id="refresh-btn", n_clicks=0),
-        html.Hr(),
-        html.H2("Select and Edit Existing Files"),
-        html.Label("Select a Folder:"),
-        dcc.Dropdown(
-            id="folder-selector",
-            options=[{"label": "(No Folder)", "value": ""}]
-            + [{"label": f, "value": f} for f in list_s3_folders() if f != ""],
-            placeholder="Select a folder",
-            clearable=True,
-            style={"width": "300px"},
-        ),
-        html.Br(),
-        html.Label("Select a File:"),
-        dcc.Dropdown(
-            id="file-selector",
-            placeholder="Select a file",
-            style={"width": "600px"},
-            clearable=True,
-        ),
-        html.Br(),
-        html.Div(id="file-display"),
-        html.Br(),
-        html.Label("Edit Tags (comma-separated):"),
-        dcc.Input(id="edit-tags", type="text", style={"width": "600px"}),
-        html.Br(),
-        html.Br(),
-        html.Label("Change Folder:"),
-        dcc.Dropdown(
-            id="edit-folder-dropdown",
-            options=[{"label": f, "value": f} for f in list_s3_folders()],
-            placeholder="Select folder",
-            clearable=True,
-            style={"width": "300px"},
-        ),
-        html.Br(),
-        html.Label("Or create new folder:"),
-        dcc.Input(
-            id="edit-new-folder",
-            type="text",
-            placeholder="Enter new folder name",
-            style={"width": "300px"},
-        ),
-        html.Br(),
-        html.Br(),
-        html.Button("Update File Metadata & Location", id="update-file-btn"),
-        html.Div(id="update-status"),
+        dcc.Tabs(
+            [
+                dcc.Tab(
+                    label="Upload Files",
+                    children=[
+                        html.H2("Upload Files"),
+                        html.Label("Storage is done on S3 buckets:"),
+                        html.Br(),
+                        html.Br(),
+                        html.Label("Select Existing Folder:"),
+                        dcc.Dropdown(
+                            id="folder-dropdown",
+                            options=[],
+                            placeholder="Select a folder (optional)",
+                            clearable=True,
+                            style={"width": "300px"},
+                        ),
+                        html.Br(),
+                        html.Label("Or Create New Folder:"),
+                        dcc.Input(
+                            id="new-folder-name",
+                            type="text",
+                            placeholder="Enter new folder name (optional)",
+                            style={"width": "300px"},
+                        ),
+                        html.Br(),
+                        html.Br(),
+                        dcc.Input(
+                            id="file-tags",
+                            type="text",
+                            placeholder="Enter tags (comma-separated)",
+                        ),
+                        html.Br(),
+                        html.Br(),
+                        dcc.Upload(
+                            id="upload-files",
+                            children=html.Button("Upload File", id="upload-button"),
+                            multiple=True,
+                        ),
+                        html.Br(),
+                        html.Div(id="upload-status"),
+                        html.Div(id="tags-status"),
+                        html.Div(id="uploaded-files-list"),
+                        html.Br(),
+                        html.Br(),
+                    ],
+                ),
+                dcc.Tab(
+                    label="Database entries",
+                    children=[
+                        html.H3("Database Entries"),
+                        html.Div(id="database-entries-list"),
+                        html.Label("Enter file paths to Delete (comma-separated):"),
+                        html.Br(),
+                        html.Br(),
+                        dcc.Input(
+                            id="delete-paths-input",
+                            type="text",
+                            placeholder="Enter file paths to delete",
+                        ),
+                        html.Br(),
+                        html.Br(),
+                        html.Button(
+                            "Delete Selected Entries", id="delete-btn", n_clicks=0
+                        ),
+                        html.Br(),
+                        html.Br(),
+                        html.Button("Refresh Table", id="refresh-btn", n_clicks=0),
+                        html.Hr(),
+                    ],
+                ),
+                dcc.Tab(
+                    label="View & Edit Files",
+                    children=[
+                        html.H2("Select and Edit Existing Files"),
+                        html.Label("Select a Folder:"),
+                        dcc.Dropdown(
+                            id="folder-selector",
+                            options=[],
+                            placeholder="Select a folder",
+                            clearable=True,
+                            style={"width": "300px"},
+                        ),
+                        html.Br(),
+                        html.Label("Select a File:"),
+                        dcc.Dropdown(
+                            id="file-selector",
+                            placeholder="Select a file",
+                            style={"width": "600px"},
+                            clearable=True,
+                        ),
+                        html.Br(),
+                        html.Div(id="file-display"),
+                        html.Br(),
+                        html.Label("Edit Tags (comma-separated):"),
+                        dcc.Input(
+                            id="edit-tags", type="text", style={"width": "600px"}
+                        ),
+                        html.Br(),
+                        html.Br(),
+                        html.Label("Change Folder:"),
+                        dcc.Dropdown(
+                            id="edit-folder-dropdown",
+                            options=[],
+                            placeholder="Select folder",
+                            clearable=True,
+                            style={"width": "300px"},
+                        ),
+                        html.Br(),
+                        html.Label("Or create new folder:"),
+                        dcc.Input(
+                            id="edit-new-folder",
+                            type="text",
+                            placeholder="Enter new folder name",
+                            style={"width": "300px"},
+                        ),
+                        html.Br(),
+                        html.Br(),
+                        html.Button(
+                            "Update File Metadata & Location", id="update-file-btn"
+                        ),
+                        html.Div(id="update-status"),
+                    ],
+                ),
+            ]
+        )
     ]
 )
 
@@ -604,3 +632,16 @@ def update_file_metadata(
         return "File metadata not found in database."
 
     return "File metadata and location updated successfully."
+
+
+@callback(
+    Output("folder-dropdown", "options"),
+    Output("folder-selector", "options"),
+    Output("edit-folder-dropdown", "options"),
+    Input("upload-files", "contents"),
+    Input("upload-button", "n_clicks"),
+)
+def refresh_folder_options(upload_contents, update_clicks):
+    folders = list_s3_folders()
+    options = [{"label": f or "(root)", "value": f} for f in folders]
+    return options, options, options
