@@ -1,3 +1,7 @@
+# ===========================
+# Dash App with AWS Cognito Auth
+# ===========================
+
 import jwt
 from dash import Dash, dcc, html, page_container, page_registry
 from dash.dependencies import Input, Output
@@ -7,31 +11,34 @@ from requests_oauthlib import OAuth2Session
 from config.settings import settings
 from flask_session import Session
 
-# Constants
+# --- Configuration constants ---
 DEBUG_MODE = settings.debug
 DASH_ENV = settings.env
 COGNITO_SCOPE = ["openid", "email", "profile"]
 
-# OAuth URLs
+# --- Cognito OAuth endpoints ---
 AUTHORIZATION_BASE_URL = f"https://{settings.cognito_domain}/oauth2/authorize"
 TOKEN_URL = f"https://{settings.cognito_domain}/oauth2/token"
 USERINFO_URL = f"https://{settings.cognito_domain}/oauth2/userInfo"
 LOGOUT_URL = f"https://{settings.cognito_domain}/logout"
 
-# Flask setup
+# --- Flask server setup ---
 server = Flask(__name__)
 server.secret_key = settings.secret_key
 server.config["SESSION_TYPE"] = "filesystem"
-Session(server)
+Session(server)  # Enables session storage on the filesystem
 
 
+# --- Healthcheck route ---
 @server.route("/health")
 def health_check():
+    """Simple healthcheck endpoint."""
     return "OK", 200
 
 
-# Cognito OAuth
+# --- OAuth2 client setup using Cognito ---
 def get_cognito():
+    """Initialize a new Cognito OAuth2 session."""
     return OAuth2Session(
         client_id=settings.cognito_client_id,
         redirect_uri=settings.cognito_redirect_uri,
@@ -39,25 +46,30 @@ def get_cognito():
     )
 
 
+# --- Login route ---
 @server.route("/login")
 def login():
+    """Start OAuth login flow with Cognito."""
     cognito = get_cognito()
     authorization_url, state = cognito.authorization_url(AUTHORIZATION_BASE_URL)
-    session["oauth_state"] = state  # store the state
+    session["oauth_state"] = state  # Save state to validate on callback
     return redirect(authorization_url)
 
 
+# --- OAuth callback route ---
 @server.route("/callback")
 def callback():
+    """Handle redirect from Cognito after login."""
     cognito = get_cognito()
     token = cognito.fetch_token(
         TOKEN_URL,
         authorization_response=request.url,
         client_secret=settings.cognito_client_secret,
-        state=session.get("oauth_state"),  # validate the state here
+        state=session.get("oauth_state"),  # Ensure state matches
     )
     session["oauth_token"] = token
 
+    # Extract user info from ID token or userinfo endpoint
     id_token = token.get("id_token")
     if id_token:
         decoded = jwt.decode(id_token, options={"verify_signature": False})
@@ -68,17 +80,22 @@ def callback():
     return redirect("/")
 
 
+# --- Logout route ---
 @server.route("/logout")
 def logout():
+    """Clear session and redirect to login."""
     session.clear()
     return redirect("/")
 
 
+# --- Session/user access helpers ---
 def is_logged_in():
+    """Check if user is logged in via OAuth."""
     return "oauth_token" in session and "user" in session
 
 
 def is_approved():
+    """Check if logged-in user is approved (via Cognito custom attribute)."""
     if is_logged_in():
         user = session["user"]
         return user.get("custom:approved", "false").lower() == "true"
@@ -86,18 +103,15 @@ def is_approved():
 
 
 def is_logged_in_and_approved():
+    """Return True if user is logged in and approved."""
     return is_logged_in() and is_approved()
 
 
+# --- Protect all routes except public/static ones ---
 @server.before_request
 def require_login():
-    exact_allowed_paths = {
-        "/",
-        "/login",
-        "/callback",
-        "/logout",
-        "/health",
-    }
+    """Redirect to login if user is not authenticated and approved."""
+    exact_allowed_paths = {"/", "/login", "/callback", "/logout", "/health"}
     prefix_allowed_paths = ("/_dash", "/assets")
 
     if request.path in exact_allowed_paths or any(
@@ -109,6 +123,7 @@ def require_login():
         return redirect("/login")
 
 
+# --- Dash app setup ---
 external_css = [
     "https://cdn.jsdelivr.net/npm/bootstrap@5.3.1/dist/css/bootstrap.min.css",
 ]
@@ -127,12 +142,16 @@ app = Dash(
 )
 
 
+# --- Route to render Dash app at root ---
 @server.route("/")
 def dash_home():
+    """Render Dash index."""
     return app.index()
 
 
+# --- Navigation UI helpers ---
 def generate_pages_links():
+    """Generate navigation links from Dash pages registry."""
     return [
         dcc.Link(
             page["name"],
@@ -149,16 +168,19 @@ def generate_pages_links():
 
 
 def navbar():
+    """Construct the navigation bar UI."""
     img_tag = html.Img(
         src="assets/PG.png",
         width=27,
         className="d-inline-block align-text-middle me-2",
     )
+
     brand_link = dcc.Link(
         [img_tag, "DashLab"],
         href="/",
         className="navbar-brand d-flex align-items-center",
     )
+
     logout_link = html.A(
         "Logout",
         href="/logout",
@@ -170,6 +192,7 @@ def navbar():
             "cursor": "pointer",
         },
     )
+
     nav_items = [html.Li(link, className="nav-item") for link in generate_pages_links()]
     nav_items.append(html.Li(logout_link, className="nav-item"))
 
@@ -206,6 +229,7 @@ def navbar():
     )
 
 
+# --- Main layout of the Dash app ---
 app.layout = html.Div(
     [
         dcc.Location(id="url", refresh=False),
@@ -213,7 +237,7 @@ app.layout = html.Div(
         html.Div(
             [
                 html.Br(),
-                page_container,
+                page_container,  # Placeholder for pages
             ],
             className="container",
             style={"paddingTop": "70px", "minHeight": "100vh"},
@@ -223,8 +247,10 @@ app.layout = html.Div(
 )
 
 
+# --- Callback to update navbar dynamically ---
 @app.callback(Output("navbar-container", "children"), Input("url", "pathname"))
 def update_navbar(pathname):
+    """Show navbar only if user is logged in and approved."""
     if is_logged_in_and_approved():
         return navbar()
     return None
