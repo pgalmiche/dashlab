@@ -1,12 +1,12 @@
 import base64
 import logging
 from datetime import datetime
+from typing import List, Optional, Union
 
 import boto3
 import dash
 import dash.dash_table as dt
-from dash import ctx  # for context in callbacks
-from dash import callback, dcc, html
+from dash import callback, callback_context, ctx, dcc, html
 from dash.dependencies import Input, Output, State
 from dash.exceptions import PreventUpdate
 from pymongo import MongoClient
@@ -16,54 +16,77 @@ from config.logging import setup_logging
 from config.settings import settings
 
 setup_logging()
-
 logger = logging.getLogger(__name__)
 
 dash.register_page(__name__, path="/file-explorer", name="S3 File Explorer", order=1)
-
 
 MONGO_URI = (
     f"mongodb://{settings.mongo_initdb_root_username}:"
     f"{settings.mongo_initdb_root_password}@mongo_db:27017/"
     f"{settings.mongo_initdb_database}?authSource=admin"
 )
+
 # AWS S3 Configuration
 S3_BUCKET_NAME = "personnal-files-pg"
 AWS_REGION = "us-east-1"
 
 
-def generate_s3_url(bucket, key, region):
+def generate_s3_url(bucket: str, key: str, region: str) -> str:
+    """
+    Generate the public S3 URL for an object.
+
+    :param bucket: S3 bucket name
+    :param key: Object key (path + filename)
+    :param region: AWS region of the bucket
+    :return: Public URL string
+    """
     if region == "us-east-1":
         return f"https://{bucket}.s3.amazonaws.com/{key}"
     else:
         return f"https://{bucket}.s3.{region}.amazonaws.com/{key}"
 
 
-def generate_presigned_url(bucket, key, expiration=3600):
+def generate_presigned_url(
+    bucket_name: str, object_key: str, expiration: int = 3600
+) -> str:
     """
-    Generate a pre-signed URL to share an S3 object.
+    Generate a pre-signed S3 URL for secure file access.
 
-    :param bucket: S3 bucket name
-    :param key: S3 object key (path/filename)
-    :param expiration: Time in seconds for URL to remain valid (default 1 hour)
-    :return: pre-signed URL as string
+    Args:
+        bucket_name (str): S3 bucket name.
+        object_key (str): Path to the file in the bucket.
+        expiration (int): URL validity period in seconds (default: 1 hour).
+
+    Returns:
+        str: Pre-signed URL, or None if generation fails.
     """
+    import boto3
+    from botocore.exceptions import ClientError
+
+    s3_client = boto3.client("s3", region_name="us-east-1")  # Set region here if needed
+
     try:
-        url = s3_client.generate_presigned_url(
+        response = s3_client.generate_presigned_url(
             "get_object",
-            Params={"Bucket": bucket, "Key": key},
-            ExpiresIn=expiration,
+            Params={"Bucket": bucket_name, "Key": object_key},
+            ExpiresIn=expiration,  # ✅ Must be an int, e.g., 3600
         )
-        return url
-    except Exception as e:
-        logger.error(f"Error generating pre-signed URL for {key}: {e}")
+        print(f"[✅] Pre-signed URL: {response}")
+        return response
+    except ClientError as e:
+        print(f"[❌] Failed to generate pre-signed URL: {e}")
         return None
 
 
 def get_collection():
+    """
+    Get MongoDB collection for file metadata.
+
+    :return: pymongo Collection object or None if connection fails
+    """
     try:
         client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
-        client.admin.command("ping")
+        client.admin.command("ping")  # Test connection
         db = client.get_database()
         return db["file_metadata"]
     except ServerSelectionTimeoutError:
@@ -76,31 +99,33 @@ s3_client = boto3.client(
     "s3",
     aws_access_key_id=settings.aws_access_key_id,
     aws_secret_access_key=settings.aws_secret_access_key,
-    region_name=settings.aws_region,
+    region_name=AWS_REGION,
 )
 
 
-def list_s3_folders():
+def list_s3_folders() -> List[str]:
+    """
+    List top-level folders in the S3 bucket.
+
+    :return: List of folder names (strings), including empty string for root
+    """
     try:
         response = s3_client.list_objects_v2(Bucket=S3_BUCKET_NAME, Delimiter="/")
         prefixes = response.get("CommonPrefixes", [])
         folders = [p["Prefix"].rstrip("/") for p in prefixes]
-        # Add a special option for files in the root (no folder)
-        folders = [""] + folders  # empty string for root
-        return folders
+        return [""] + folders  # Include root folder as empty string
     except Exception as e:
         logger.error(f"Failed to list S3 folders: {e}")
         return []
 
 
-# Layout of the page
+# Page layout definition
 layout = html.Div(
     [
         html.H2("Upload Files"),
         html.Label("Storage is done on S3 buckets:"),
         html.Br(),
         html.Br(),
-        # Dropdown for existing folders
         html.Label("Select Existing Folder:"),
         dcc.Dropdown(
             id="folder-dropdown",
@@ -110,7 +135,6 @@ layout = html.Div(
             style={"width": "300px"},
         ),
         html.Br(),
-        # Or input new folder name
         html.Label("Or Create New Folder:"),
         dcc.Input(
             id="new-folder-name",
@@ -120,28 +144,22 @@ layout = html.Div(
         ),
         html.Br(),
         html.Br(),
-        # Tags Input
         dcc.Input(
             id="file-tags", type="text", placeholder="Enter tags (comma-separated)"
         ),
         html.Br(),
         html.Br(),
-        # File Upload
         dcc.Upload(
             id="upload-files", children=html.Button("Upload File"), multiple=True
         ),
         html.Br(),
-        # Display Status Messages
         html.Div(id="upload-status"),
         html.Div(id="tags-status"),
-        # List of Uploaded Files
         html.Div(id="uploaded-files-list"),
-        # Database Entries
         html.Br(),
         html.Br(),
         html.H3("Database Entries"),
         html.Div(id="database-entries-list"),
-        # Deletion Input
         html.Label("Enter file paths to Delete (comma-separated):"),
         html.Br(),
         html.Br(),
@@ -152,7 +170,6 @@ layout = html.Div(
         ),
         html.Br(),
         html.Br(),
-        # Delete and Refresh Buttons
         html.Button("Delete Selected Entries", id="delete-btn", n_clicks=0),
         html.Br(),
         html.Br(),
@@ -207,8 +224,17 @@ layout = html.Div(
 )
 
 
-# Function to save file to S3 with optional folder prefix
-def save_file(decoded_content, filename, folder_name=None):
+def save_file(
+    decoded_content: bytes, filename: str, folder_name: Optional[str] = None
+) -> str:
+    """
+    Save a file to S3 with an optional folder prefix.
+
+    :param decoded_content: File content as bytes
+    :param filename: Name of the file
+    :param folder_name: Optional folder prefix within the bucket
+    :return: Public URL of the saved file
+    """
     if folder_name:
         folder_name = folder_name.strip().strip("/")
         key = f"{folder_name}/{filename}"
@@ -220,8 +246,13 @@ def save_file(decoded_content, filename, folder_name=None):
     return s3_url
 
 
-# Function to store metadata in MongoDB
-def store_file_metadata(file_path, tags):
+def store_file_metadata(file_path: str, tags: List[str]) -> None:
+    """
+    Store file metadata in MongoDB.
+
+    :param file_path: URL or path of the stored file
+    :param tags: List of tags associated with the file
+    """
     collection = get_collection()
     if collection is None:
         logger.info("Skipping metadata storage: no DB connection.")
@@ -234,8 +265,12 @@ def store_file_metadata(file_path, tags):
     collection.insert_one(file_entry)
 
 
-# Function to delete files from S3
-def delete_file_from_s3(filename):
+def delete_file_from_s3(filename: str) -> None:
+    """
+    Delete a file from S3.
+
+    :param filename: Object key (path + filename) in S3
+    """
     try:
         s3_client.delete_object(Bucket=S3_BUCKET_NAME, Key=filename)
         logger.info(f"Deleted {filename} from S3.")
@@ -243,15 +278,22 @@ def delete_file_from_s3(filename):
         logger.error(f"Error deleting {filename} from S3: {e}")
 
 
-# Function to delete files based on their path (S3 only now)
-def delete_entries_by_path(paths_to_delete):
+def delete_entries_by_path(paths_to_delete: List[str]) -> None:
+    """
+    Delete files from S3 and remove their metadata from MongoDB.
+
+    :param paths_to_delete: List of file paths (URLs) to delete
+    """
     collection = get_collection()
     if collection is None:
-        logger.info("Skipping metadata storage: no DB connection.")
+        logger.info("Skipping deletion: no DB connection.")
         return
+
     for file_path in paths_to_delete:
         if file_path.startswith("https://"):
-            filename = "/".join(file_path.split("/")[3:])  # Remove domain and bucket
+            # Extract S3 key from URL
+            parts = file_path.split("/")
+            filename = "/".join(parts[3:])  # bucket + region parts removed
             delete_file_from_s3(filename)
         else:
             logger.warning(f"Invalid file path for deletion: {file_path}")
@@ -259,16 +301,20 @@ def delete_entries_by_path(paths_to_delete):
     collection.delete_many({"file_path": {"$in": paths_to_delete}})
 
 
-# Fetch all file metadata from MongoDB
-def fetch_all_files():
+def fetch_all_files() -> List[dict]:
+    """
+    Fetch all file metadata entries from MongoDB.
+
+    :return: List of file metadata dicts
+    """
     collection = get_collection()
     if collection is None:
-        logger.info("Skipping metadata storage: no DB connection.")
+        logger.info("Skipping fetch: no DB connection.")
         return []
     return list(collection.find({}, {"_id": 0}))
 
 
-####################### Callbacks #############################
+########################### Callbacks ##############################
 
 
 @callback(
@@ -277,118 +323,148 @@ def fetch_all_files():
     Output("uploaded-files-list", "children"),
     Input("upload-files", "contents"),
     State("upload-files", "filename"),
-    State("file-tags", "value"),
     State("folder-dropdown", "value"),
     State("new-folder-name", "value"),
+    State("file-tags", "value"),
 )
-def upload_files(files_contents, filenames, tags, selected_folder, new_folder):
-    if files_contents is None:
+def upload_files(
+    file_contents: Optional[List[str]],
+    filenames: Optional[List[str]],
+    selected_folder: Optional[str],
+    new_folder_name: Optional[str],
+    file_tags: Optional[str],
+) -> tuple[str, str, html.Ul]:
+    """
+    Upload files to S3 bucket, optionally into a folder.
+    Store metadata (file URL and tags) into MongoDB.
+    Display upload and tags status and list of uploaded files.
+
+    :param file_contents: List of base64 encoded file contents
+    :param filenames: List of filenames
+    :param selected_folder: Folder selected from dropdown (optional)
+    :param new_folder_name: New folder name entered by user (optional)
+    :param file_tags: Tags entered as comma-separated string (optional)
+    :return: Tuple of upload status message, tags status, and uploaded files list element
+    """
+    if not file_contents or not filenames:
         raise PreventUpdate
 
-    # Decide which folder to use
-    folder_to_use = None
-    if new_folder and new_folder.strip():
-        folder_to_use = new_folder.strip()
-    elif selected_folder:
-        folder_to_use = selected_folder
+    folder_name = new_folder_name.strip() if new_folder_name else selected_folder
 
-    status_messages = []
-    uploaded_files_new = []
+    tags_list = []
+    if file_tags:
+        tags_list = [tag.strip() for tag in file_tags.split(",") if tag.strip()]
 
-    for content, filename in zip(files_contents, filenames):
-        content_type, content_string = content.split(",")
-        decoded = base64.b64decode(content_string)
+    uploaded_filenames = []
 
-        # Save file in chosen folder (make sure save_file accepts folder)
-        file_path = save_file(decoded, filename, folder_to_use)
-
-        # Store metadata in MongoDB
-        store_file_metadata(file_path, tags.split(",") if tags else [])
-
-        status_messages.append(f"File '{filename}' uploaded successfully!")
-
-        uploaded_files_new.append(
-            {
-                "file_path": file_path,
-                "tags": tags.split(",") if tags else [],
-                "timestamp": datetime.utcnow(),
-            }
-        )
-
-    return (
-        status_messages,
-        f"Tags for the file(s): {tags}",
-        html.Ul(
-            [
-                html.Li(
-                    f"File: {file['file_path']} | Tags: {', '.join(file['tags'])} | Uploaded on: {file['timestamp']}"
-                )
-                for file in uploaded_files_new
-            ]
-        ),
-    )
-
-
-# Callback to display and delete database entries
-@callback(
-    Output("database-entries-list", "children"),
-    [Input("delete-btn", "n_clicks"), Input("refresh-btn", "n_clicks")],
-    State("delete-paths-input", "value"),
-)
-def display_and_delete_entries(delete_clicks, refresh_clicks, paths_input):
-    entries = fetch_all_files()
-
-    if not entries:
-        return "No entries found in the database."
-
-    df_data = [
-        {
-            "File Path": entry.get("file_path", "N/A"),
-            "Tags": ", ".join(entry.get("tags", [])),
-            "Upload Time": entry.get("timestamp", "N/A"),
-        }
-        for entry in entries
-    ]
-
-    table = dt.DataTable(
-        columns=[
-            {"name": "File Path", "id": "File Path"},
-            {"name": "Tags", "id": "Tags"},
-            {"name": "Upload Time", "id": "Upload Time"},
-        ],
-        data=df_data,
-        style_table={"overflowX": "auto"},
-        style_header={
-            "backgroundColor": "black",
-            "color": "white",
-            "fontWeight": "bold",
-            "textAlign": "center",
-        },
-        style_cell={"textAlign": "left", "padding": "5px"},
-        style_data_conditional=[
-            {"if": {"row_index": "odd"}, "backgroundColor": "#f9f9f9"}
-        ],
-        page_size=10,
-        sort_action="native",
-        filter_action="native",
-    )
-
-    if delete_clicks > 0 and paths_input:
-        paths_to_delete = [path.strip() for path in paths_input.split(",")]
-
-        if paths_to_delete:
-            delete_entries_by_path(paths_to_delete)
-            return html.Div(
-                [
-                    html.P(f"{len(paths_to_delete)} entries deleted successfully."),
-                    table,
-                ]
+    for content, filename in zip(file_contents, filenames):
+        try:
+            content_type, content_string = content.split(",")
+            decoded = base64.b64decode(content_string)
+            file_url = save_file(decoded, filename, folder_name)
+            store_file_metadata(file_url, tags_list)
+            uploaded_filenames.append(filename)
+            logger.info(f"Uploaded {filename} to folder {folder_name or '(root)'}")
+        except Exception as e:
+            logger.error(f"Error uploading file {filename}: {e}")
+            return (
+                f"Error uploading {filename}: {e}",
+                "",
+                html.Ul([html.Li(filename) for filename in uploaded_filenames]),
             )
 
-    if refresh_clicks > 0:
-        return table
+    status_msg = f"Successfully uploaded {len(uploaded_filenames)} file(s)."
+    tags_msg = (
+        f"Tags applied: {', '.join(tags_list)}" if tags_list else "No tags applied."
+    )
+    return status_msg, tags_msg, html.Ul([html.Li(f) for f in uploaded_filenames])
 
-    return table
+
+@callback(
+    Output("database-entries-list", "children"),
+    Input("refresh-btn", "n_clicks"),
+    Input("delete-btn", "n_clicks"),
+    State("delete-paths-input", "value"),
+    prevent_initial_call=True,
+)
+def update_database_entries(
+    refresh_clicks: int, delete_clicks: int, delete_paths: Optional[str]
+) -> Union[html.Table, html.Div]:
+    """
+    Update the displayed database entries table.
+    Handles both refresh requests and deletions.
+    Deletes files from S3 and entries from MongoDB if delete button clicked.
+
+    :param refresh_clicks: Number of clicks on refresh button
+    :param delete_clicks: Number of clicks on delete button
+    :param delete_paths: Comma-separated string of file paths to delete
+    :return: HTML Table with database entries or a message div
+    """
+    triggered_id = callback_context.triggered[0]["prop_id"].split(".")[0]
+
+    if triggered_id == "delete-btn":
+        if not delete_paths:
+            return html.Div("Please enter file paths to delete.")
+        paths_to_delete = [p.strip() for p in delete_paths.split(",") if p.strip()]
+        if not paths_to_delete:
+            return html.Div("No valid paths provided for deletion.")
+        delete_entries_by_path(paths_to_delete)
+        logger.info(f"Deleted entries for paths: {paths_to_delete}")
+
+    files = fetch_all_files()
+
+    if not files:
+        return html.Div("No file entries found in database.")
+
+    # Build table headers dynamically from keys of first entry
+    columns = list(files[0].keys())
+    table_header = [html.Th(col) for col in columns]
+
+    # Build table rows
+    table_rows = []
+    for file in files:
+        row = [html.Td(file.get(col, "")) for col in columns]
+        table_rows.append(html.Tr(row))
+
+    return html.Table(
+        [html.Thead(html.Tr(table_header)), html.Tbody(table_rows)],
+        style={"border": "1px solid black", "borderCollapse": "collapse"},
+    )
+
+
+@callback(
+    Output("file-selector", "options"),
+    Input("folder-selector", "value"),
+)
+def update_file_selector_options(folder_name: Optional[str]) -> List[dict]:
+    """
+    Update the file dropdown options based on the selected folder.
+
+    :param folder_name: Selected folder name or empty string for root
+    :return: List of options dicts for dcc.Dropdown
+    """
+    prefix = f"{folder_name.strip()}/" if folder_name else ""
+    try:
+        response = s3_client.list_objects_v2(Bucket=S3_BUCKET_NAME, Prefix=prefix)
+        files = response.get("Contents", [])
+        file_keys = [obj["Key"] for obj in files if not obj["Key"].endswith("/")]
+        options = [{"label": key[len(prefix) :], "value": key} for key in file_keys]
+        return options
+    except Exception as e:
+        logger.error(f"Error listing files in folder '{folder_name}': {e}")
+        return []
+
+
+def is_image(file_key: str) -> bool:
+    return file_key.lower().endswith((".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp"))
+
+
+def is_pdf(file_key: str) -> bool:
+    return file_key.lower().endswith(".pdf")
+
+
+def is_audio(file_key: str) -> bool:
+    return file_key.lower().endswith((".mp3", ".wav", ".ogg"))
 
 
 @callback(
@@ -396,161 +472,120 @@ def display_and_delete_entries(delete_clicks, refresh_clicks, paths_input):
     Output("edit-tags", "value"),
     Output("edit-folder-dropdown", "value"),
     Output("edit-new-folder", "value"),
-    Input("folder-selector", "value"),
     Input("file-selector", "value"),
 )
-def display_file_and_metadata(selected_folder, selected_file):
-    if not selected_folder or not selected_file:
-        return "", "", None, ""
+def display_selected_file(
+    file_key: Optional[str],
+) -> tuple[html.Div, str, Optional[str], str]:
+    if not file_key:
+        return html.Div("No file selected."), "", None, ""
 
-    if selected_folder:
-        full_key = f"{selected_folder}/{selected_file}"
+    file_url = generate_presigned_url(S3_BUCKET_NAME, file_key)
+
+    logging.info(f"Generated url: {file_url}")
+
+    # Determine file type and render appropriately
+    if is_image(file_key):
+        display_component = html.Img(src=file_url, style={"maxWidth": "100%"})
+    elif is_pdf(file_key):
+        display_component = html.Iframe(
+            src=file_url, style={"width": "100%", "height": "600px"}
+        )
+    elif is_audio(file_key):
+        display_component = html.Audio(src=file_url, controls=True)
     else:
-        full_key = selected_file
+        display_component = html.A("Download file", href=file_url, target="_blank")
 
-    file_url = generate_presigned_url(S3_BUCKET_NAME, full_key)
-    if not file_url:
-        return "Failed to generate file URL.", "", None, ""
-
+    # Fetch tags from database
     collection = get_collection()
-    if collection is None:
-        return "No DB connection.", "", None, ""
+    metadata = collection.find_one({"file_path": {"$regex": file_key}})
+    tags = ", ".join(metadata.get("tags", [])) if metadata else ""
 
-    file_doc = collection.find_one({"file_path": file_url})
-    if not file_doc:
-        return "File metadata not found.", "", None, ""
+    folder_name = "/".join(file_key.split("/")[:-1]) if "/" in file_key else ""
 
-    tags = ",".join(file_doc.get("tags", []))
-
-    # Display image or pdf inline, else download link
-    lower_path = file_url.lower()
-    if any(
-        lower_path.endswith(ext) for ext in [".png", ".jpg", ".jpeg", ".gif", ".bmp"]
-    ):
-        file_display = html.Img(
-            src=file_url, style={"maxWidth": "600px", "maxHeight": "400px"}
-        )
-    elif lower_path.endswith(".pdf"):
-        file_display = html.Iframe(
-            src=file_url, style={"width": "600px", "height": "400px"}
-        )
-    else:
-        file_display = html.A("Download File", href=file_url, target="_blank")
-
-    return file_display, tags, selected_folder, ""
-
-
-@callback(
-    Output("file-selector", "options"),
-    Output("file-selector", "value"),
-    Input("refresh-btn", "n_clicks"),
-    Input("folder-selector", "value"),
-    prevent_initial_call=False,
-)
-def update_file_selector_options_and_files(refresh_clicks, selected_folder):
-    triggered_id = ctx.triggered_id
-
-    if triggered_id == "refresh-btn":
-        # On refresh button click, fetch all files from DB and update options
-        files = fetch_all_files()
-        options = [
-            {"label": file["file_path"], "value": file["file_path"]} for file in files
-        ]
-        # We can't guess a good value here, so just keep it None (no selection)
-        return options, None
-
-    elif triggered_id == "folder-selector":
-        # Folder selected - list files in S3 folder or root if empty string
-        prefix = (
-            f"{selected_folder}/" if selected_folder else ""
-        )  # empty prefix if root
-
-        try:
-            response = s3_client.list_objects_v2(Bucket=S3_BUCKET_NAME, Prefix=prefix)
-            contents = response.get("Contents", [])
-            files = [
-                obj["Key"].replace(prefix, "")
-                for obj in contents
-                if not obj["Key"].endswith("/")
-            ]
-            options = [{"label": f, "value": f} for f in files]
-            return options, None
-        except Exception as e:
-            logger.error(f"Failed to list files in folder '{selected_folder}': {e}")
-            return [], None
-
-    # Fallback: no trigger or unknown trigger
-    return [], None
+    return html.Div([display_component]), tags, folder_name or None, ""
 
 
 @callback(
     Output("update-status", "children"),
     Input("update-file-btn", "n_clicks"),
-    State("folder-selector", "value"),
     State("file-selector", "value"),
     State("edit-tags", "value"),
     State("edit-folder-dropdown", "value"),
     State("edit-new-folder", "value"),
     prevent_initial_call=True,
 )
-def update_file_metadata_and_location(
-    n_clicks, current_folder, current_file, new_tags_str, selected_folder, new_folder
-):
-    if not current_folder or not current_file:
-        return "No file selected."
+def update_file_metadata(
+    n_clicks: int,
+    selected_file_key: Optional[str],
+    new_tags: Optional[str],
+    selected_folder: Optional[str],
+    new_folder_name: Optional[str],
+) -> str:
+    """
+    Update file tags and optionally move the file to a new folder.
+
+    :param n_clicks: Number of update button clicks
+    :param selected_file_key: Currently selected file S3 key
+    :param new_tags: New tags as comma-separated string
+    :param selected_folder: Selected folder from dropdown for new location
+    :param new_folder_name: New folder name input (optional)
+    :return: Status message string
+    """
+    if not selected_file_key:
+        return "No file selected to update."
 
     collection = get_collection()
     if collection is None:
-        return "No DB connection."
+        return "Database connection not available."
 
-    old_key = f"{current_folder}/{current_file}"
-    old_file_path = f"https://{S3_BUCKET_NAME}.s3.{AWS_REGION}.amazonaws.com/{old_key}"
+    # Prepare tags list
+    tags_list = []
+    if new_tags:
+        tags_list = [tag.strip() for tag in new_tags.split(",") if tag.strip()]
 
-    file_doc = collection.find_one({"file_path": old_file_path})
-    if not file_doc:
-        return "File metadata not found."
+    # Determine new folder path
+    target_folder = (
+        new_folder_name.strip() if new_folder_name else selected_folder or ""
+    )
 
-    # Determine new folder to move to
-    folder_to_use = None
-    if new_folder and new_folder.strip():
-        folder_to_use = new_folder.strip()
-    elif selected_folder:
-        folder_to_use = selected_folder
+    old_key = selected_file_key
+    filename = old_key.split("/")[-1]
 
-    new_tags = [tag.strip() for tag in new_tags_str.split(",")] if new_tags_str else []
-
-    new_key = old_key
-    if folder_to_use:
-        filename_only = current_file
-        new_key = f"{folder_to_use}/{filename_only}"
-
-    try:
-        # Move file if folder changed
-        if new_key != old_key:
-            copy_source = {"Bucket": S3_BUCKET_NAME, "Key": old_key}
+    # If folder changed, move file in S3
+    if target_folder and target_folder.strip() != "/".join(old_key.split("/")[:-1]):
+        new_key = f"{target_folder.strip().rstrip('/')}/{filename}"
+        try:
+            # Copy old object to new key
             s3_client.copy_object(
-                Bucket=S3_BUCKET_NAME, CopySource=copy_source, Key=new_key
+                Bucket=S3_BUCKET_NAME,
+                CopySource={"Bucket": S3_BUCKET_NAME, "Key": old_key},
+                Key=new_key,
             )
+            # Delete old object
             s3_client.delete_object(Bucket=S3_BUCKET_NAME, Key=old_key)
+            logger.info(f"Moved file from {old_key} to {new_key}")
+        except Exception as e:
+            logger.error(f"Error moving file in S3: {e}")
+            return f"Error moving file: {e}"
+    else:
+        new_key = old_key
 
-        new_file_path = (
-            f"https://{S3_BUCKET_NAME}.s3.{AWS_REGION}.amazonaws.com/{new_key}"
-        )
+    new_file_url = generate_s3_url(S3_BUCKET_NAME, new_key, AWS_REGION)
 
-        # Update metadata
-        collection.update_one(
-            {"file_path": old_file_path},
-            {
-                "$set": {
-                    "file_path": new_file_path,
-                    "tags": new_tags,
-                    "timestamp": datetime.utcnow(),
-                }
-            },
-        )
+    # Update DB entry
+    update_result = collection.update_one(
+        {"file_path": generate_s3_url(S3_BUCKET_NAME, old_key, AWS_REGION)},
+        {
+            "$set": {
+                "file_path": new_file_url,
+                "tags": tags_list,
+                "timestamp": datetime.utcnow(),
+            }
+        },
+    )
 
-        return "File metadata and location updated successfully."
+    if update_result.matched_count == 0:
+        return "File metadata not found in database."
 
-    except Exception as e:
-        logger.error(f"Error updating file metadata/location: {e}")
-        return f"Error: {str(e)}"
+    return "File metadata and location updated successfully."
