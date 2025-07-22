@@ -1,11 +1,13 @@
 import base64
 import logging
+import mimetypes
 from datetime import datetime
 from typing import List, Optional, Union
 
 import boto3
 import dash
 import dash.dash_table as dt
+from botocore.exceptions import ClientError
 from dash import callback, callback_context, ctx, dcc, html
 from dash.dependencies import Input, Output, State
 from dash.exceptions import PreventUpdate
@@ -48,33 +50,46 @@ def generate_s3_url(bucket: str, key: str, region: str) -> str:
 
 def generate_presigned_url(
     bucket_name: str, object_key: str, expiration: int = 3600
-) -> str:
+) -> Optional[str]:
     """
-    Generate a pre-signed S3 URL for secure file access.
+    Generate a pre-signed URL to access a file in S3.
 
-    Args:
-        bucket_name (str): S3 bucket name.
-        object_key (str): Path to the file in the bucket.
-        expiration (int): URL validity period in seconds (default: 1 hour).
+    Parameters:
+        bucket_name (str): Name of the S3 bucket.
+        object_key (str): Key (path) of the file within the bucket.
+        expiration (int): Time in seconds for the URL to remain valid. Default is 3600 (1 hour).
 
     Returns:
-        str: Pre-signed URL, or None if generation fails.
+        Optional[str]: A pre-signed URL if successful, or None if generation fails.
     """
-    import boto3
-    from botocore.exceptions import ClientError
-
-    s3_client = boto3.client("s3", region_name="us-east-1")  # Set region here if needed
-
     try:
-        response = s3_client.generate_presigned_url(
-            "get_object",
-            Params={"Bucket": bucket_name, "Key": object_key},
-            ExpiresIn=expiration,  # ✅ Must be an int, e.g., 3600
+        # Guess MIME type from file extension
+        mime_type, _ = mimetypes.guess_type(object_key)
+
+        # Build request parameters
+        params = {
+            "Bucket": bucket_name,
+            "Key": object_key,
+        }
+
+        # If MIME type is known and displayable, set headers to inline
+        if mime_type:
+            params["ResponseContentDisposition"] = "inline"
+            params["ResponseContentType"] = mime_type
+        else:
+            # Default to download if MIME type is unknown
+            params["ResponseContentDisposition"] = "attachment"
+
+        # Generate the pre-signed URL
+        url = s3_client.generate_presigned_url(
+            ClientMethod="get_object", Params=params, ExpiresIn=expiration
         )
-        print(f"[✅] Pre-signed URL: {response}")
-        return response
-    except ClientError as e:
-        print(f"[❌] Failed to generate pre-signed URL: {e}")
+
+        logger.info(f"Generated pre-signed URL for: s3://{bucket_name}/{object_key}")
+        return url
+
+    except (BotoCoreError, ClientError) as e:
+        logger.error(f"Error generating pre-signed URL for {object_key}: {e}")
         return None
 
 
