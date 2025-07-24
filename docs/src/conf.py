@@ -13,7 +13,7 @@
 import sys
 from os.path import abspath
 
-sys.path.insert(0, abspath("./"))
+sys.path.insert(0, abspath("../.."))
 
 # -- Project information -----------------------------------------------------
 
@@ -36,6 +36,14 @@ extensions = [
     "sphinx_tabs.tabs",
 ]
 
+autosummary_generate = True
+autodoc_default_options = {
+    "members": True,
+    "undoc-members": True,
+    "show-inheritance": True,
+    "inherited-members": True,
+}
+
 intersphinx_mapping = {
     "python": ("https://docs.python.org/3/", None),
     "sphinx": ("https://www.sphinx-doc.org/en/master/", None),
@@ -47,7 +55,7 @@ intersphinx_mapping = {
 # List of patterns, relative to source directory, that match files and
 # directories to ignore when looking for source files.
 # This pattern also affects html_static_path and html_extra_path.
-exclude_patterns = ["_build", "Thumbs.db", ".DS_Store"]
+exclude_patterns = ["_build", "Thumbs.db", ".DS_Store", "./tests"]
 
 # -- Options for HTML output -------------------------------------------------
 

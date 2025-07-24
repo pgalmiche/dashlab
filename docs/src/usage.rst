@@ -1,44 +1,47 @@
-==========
-How to use
-==========
+How to Use DashLab
+==================
 
-This gives the main steps to make this project run and use it.
+Access & Restrictions
+---------------------
 
+DashLab is a personal project actively used and maintained by its author. While parts of the dashboard are open to all users, access to specific features is **restricted** to manage:
 
-Step 1: run docker
-----------------------
+- **Resource costs** (hosting, databases, compute)
+- **Security** of private or experimental tools
+- **Personal projects** that are not intended for public use
 
-* build the image
+This means you may not see all available modules or data when visiting the application.
 
-.. code-block:: bash
+Logging In
+----------
 
-  make docker-build
+To access more advanced or restricted sections of DashLab, you must log in:
 
-* run the container
+1. Click on the **"Login"** button in the top navigation bar.
+2. You will be redirected to a secure **AWS Cognito** login page.
+3. There, you can either:
+   - Log in with your existing credentials
+   - **Create a new account**, which requires:
+     - A valid email address
+     - Confirmation through an email validation link
 
-.. code-block:: bash
+Approval Process
+----------------
 
-  make docker-run
+Once you've registered and verified your email:
 
+- I (the maintainer) **automatically receive an email notification**
+- I will manually review and **approve your access** as soon as possible
+- Once approved, you’ll be able to access the restricted content
 
-Step 2: Enjoy the code 
---------------------------
+Why This Process?
+-----------------
 
-You can run the code you want to use and save your results on a git platform.
+This manual validation allows me to:
 
-You can follow the tutorials to deploy your git repo with the documentation with CI.
+- Keep hosting and authentication costs reasonable (I cover them personally)
+- Prevent abuse or spam accounts
+- Maintain a good user experience and stability for all active users
 
-Step 3: stop docker
-----------------------
+Thank you for your understanding and interest in the project!
 
-* stop the container
-
-.. code-block:: bash
-
-  make docker-stop
-
-* delete the image and all dependencies of this project on your computer
-
-.. code-block:: bash
-
-  make docker-image_removal

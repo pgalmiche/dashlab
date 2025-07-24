@@ -1,0 +1,20 @@
+services:
+  docs:
+    container_name: dashlab-docs
+    build:
+      context: ".."
+      dockerfile: ./docker/dev.Dockerfile
+    image: dashlab-dev:latest
+    ports:
+      - "8000:8000"
+    volumes:
+      - code_directory:/usr/src/app/:rw
+    command: ["bash", "/usr/src/app/scripts/build-and-serve-docs.sh"]
+
+volumes:
+  code_directory:
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ../

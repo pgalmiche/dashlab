@@ -1,30 +1,21 @@
-===========
-repo-setter
-===========
+DashLab
+=======
 
-**repo-setter** is a project aiming at starting projects that can be run inside docker
-containers.
+**DashLab** is a project aiming to provide a dashboard with user verification allowing access to current and future coding projects from anywhere.
 
-:K3D:`K3D <>` is used for 3D animations exported in a standalone HTML file.
-This HTML file can then be opened in any browsers on any laptop,
-is can then be easily integrated into a website or presentation slides like reveal js.
-
-.. warning::
-   The documentation is not complete yet, this version is
-   only used to test the CI on GitHub and GitLab.
 
 Features
 --------
 
-**repo-setter** provides:
+**DashLab** provides:
 
-* docker templates for latex/python/julia/nodejs projects 
-* a makefile to simplify docker usage 
-* automatic documentation tools like Sphinx or Doxygen
+* A dashboard with AWS Cognito Authentication 
+* Personalized access to various coding projects and tools
+* Automatic documentation tools like this one for the project
 
 .. note::
-   The folder/files organization has been inspired from the SimExporter GitHub project
-   make by RobinEnjalbert.
+   The folder/files organization has been inspired by the SimExporter GitHub project
+   make by Robin Enjalbert.
 
 Gallery
 -------
@@ -37,6 +28,6 @@ Gallery
     :hidden:
 
     Demo        <demo.rst>
-    Install     <install.rst>
+    Install     <local-setup.rst>
     How to use  <usage.rst>
     API         <api.rst>

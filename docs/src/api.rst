@@ -1,21 +1,13 @@
-===
-API
-===
+===============
+API Reference
+===============
 
-.. automodule:: main
-   :members:
+This section contains the full API reference for all core modules, classes, and functions in DashLab.
 
-.. generates for specific files
-.. autoclass:: main.DemoTest
-    :special-members: __init__
-    :members: print_useful
-    :undoc-members:
-    :show-inheritance:  
-    :noindex:
+.. autosummary::
+   :toctree: _autosummary
+   :recursive:
 
-
-.. autoclass:: main.DemoDisplay
-    :members: show_man
-    :noindex:
-
-
+   app.api.dashboard
+   config.logging
+   config.settings
