@@ -1,3 +1,16 @@
 #!/bin/bash
-docker compose -f docker/compose.docs.yml up --build docs
+set -e  # Exit on any error
 
+# Stop and remove any old containers and networks for these services to avoid conflicts
+docker compose -f docker/compose.docs.yml down --remove-orphans
+
+# Build and start the specified services with fresh containers
+docker compose -f docker/compose.docs.yml up --build docs --remove-orphans
+
+# Clean up dangling images after build (optional but good practice)
+docker image prune -f
+
+# Optionally: clean up all stopped containers (use with caution)
+docker container prune -f
+
+echo "Containers started, and cleanup done once stopped."

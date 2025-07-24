@@ -1,13 +1,13 @@
 services:
-  python-dashboard:
-    container_name: dashboard-python
+  dashlab:
+    container_name: dashlab-container
     build:
       context: ".."
       dockerfile: ./docker/dev.Dockerfile
     image: dashlab-dev:latest
     command: python3 -m app.main
     volumes:
-      - code_directory:/usr/src/app/:rw
+      - dashlab_code:/usr/src/app/:rw
     ports:
       - 7777:7777
     networks:
@@ -24,17 +24,27 @@ services:
     ports:
       - "27017:27017" # Expose MongoDB default port
     volumes:
-      - ../mongo_data:/data/db
+      - mongo_data:/data/db
     networks:
       - mynetwork # Attach to 'mynetwork'
 
 volumes:
-  code_directory:
+  dashlab_code:
     driver: local
+    labels:
+      project: dashlab
     driver_opts:
       type: none
       o: bind
       device: ../
+  mongo_data:
+    labels:
+      project: dashlab
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ../mongo_data
 
 networks:
   mynetwork:
