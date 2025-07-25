@@ -63,6 +63,20 @@ services:
       - dashlab_code:/usr/src/app/:rw
     command: ["bash", "/usr/src/app/scripts/build-and-serve-docs.sh"]
 
+  precommit:
+    container_name: precommit-container
+    build:
+      context: ".."
+      dockerfile: ./docker/precommit.Dockerfile
+    image: dashlab-precommit:latest
+    working_dir: /usr/src/app
+    volumes:
+      - dashlab_code:/usr/src/app:rw
+    user: "${UID:-1000}:${GID:-1000}"
+    command: ["pre-commit"]
+    # command: tail -f /dev/null # keep container running
+    # tty: true
+
 volumes:
   dashlab_code:
     driver: local

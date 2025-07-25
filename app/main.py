@@ -1,11 +1,12 @@
+import logging
+
 from app.api.dashboard import app
 from config.logging import setup_logging
 from config.settings import settings
 
 setup_logging()
 
-import logging
-
+# add logger
 logger = logging.getLogger(__name__)
 
 if __name__ == "__main__" and settings.env == "development":

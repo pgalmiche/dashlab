@@ -278,4 +278,5 @@ def update_navbar(pathname):
     """Show navbar only if user is logged in and approved."""
     if is_logged_in_and_approved():
         return navbar()
+    # TODO limit access according to pathname
     return None
