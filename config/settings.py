@@ -1,3 +1,23 @@
+"""
+Application Configuration Settings
+
+Defines the application configuration using Pydantic's BaseSettings,
+loading environment variables from a `.env` file by default.
+
+Includes:
+
+- Security keys and debug flags
+- AWS credentials and region
+- MongoDB credentials and database info
+- AWS Cognito OAuth2 client settings
+- OAuthlib transport configuration
+
+The `Settings` class enforces strict environment variable validation to
+catch typos or missing values early.
+
+A global `settings` instance is created for convenient import across the app.
+"""
+
 from pydantic import Field
 from pydantic_settings import BaseSettings
 

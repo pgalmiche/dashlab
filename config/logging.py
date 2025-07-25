@@ -1,3 +1,19 @@
+"""
+Logging Configuration Module
+
+Sets up structured logging for the application based on the debug setting
+from the configuration. Supports console output with customizable formats,
+including a standard human-readable formatter and an optional JSON formatter.
+
+Features:
+- Dynamically sets log level to DEBUG or INFO depending on app debug mode
+- Configures root logger and suppresses verbose logs from certain libraries
+- Easily extendable to add file handlers or other logging destinations
+
+Usage:
+Call `setup_logging()` early in your application startup to initialize logging.
+"""
+
 import logging
 import sys
 from logging.config import dictConfig

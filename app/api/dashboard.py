@@ -1,15 +1,38 @@
-# ===========================
-# Dash App with AWS Cognito Auth
-# ===========================
+"""
+DashLab Dashboard with AWS Cognito Authentication
+
+This module sets up a Flask server integrated with a Dash application,
+using AWS Cognito OAuth2 for user authentication and authorization.
+
+Features:
+- OAuth2 login/logout flow via Cognito
+- User session management stored on the filesystem inside the Docker container
+- Access control ensuring only logged-in and approved users can access protected routes
+- Dynamic navigation bar based on user authentication state
+- Healthcheck endpoint for monitoring
+
+Dependencies:
+- Flask for server and session management
+- Dash for building the interactive web application UI
+- requests-oauthlib for handling OAuth2 sessions
+- PyJWT for decoding JWT tokens from Cognito
+
+Configuration:
+- All sensitive keys and URLs are loaded from the `config.settings` module
+- Session files are stored in `/tmp/flask_session` within the container
+
+Usage:
+Run the Flask server which serves both the OAuth routes and the Dash app.
+"""
 
 import jwt
 from dash import Dash, dcc, html, page_container, page_registry
 from dash.dependencies import Input, Output
 from flask import Flask, redirect, request, session
+from flask_session import Session
 from requests_oauthlib import OAuth2Session
 
 from config.settings import settings
-from flask_session import Session
 
 # --- Configuration constants ---
 DEBUG_MODE = settings.debug
@@ -26,6 +49,8 @@ LOGOUT_URL = f"https://{settings.cognito_domain}/logout"
 server = Flask(__name__)
 server.secret_key = settings.secret_key
 server.config["SESSION_TYPE"] = "filesystem"
+# save flask_session in container and not local dev
+server.config["SESSION_FILE_DIR"] = "/tmp/flask_session"
 Session(server)  # Enables session storage on the filesystem
 
 

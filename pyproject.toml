@@ -27,6 +27,8 @@ dependencies = [
   "sphinx<7.0.0",
   "sphinx-rtd-theme",
   "sphinx-tabs",
+  "pytest",
+  "pytest-cov"
 ]
 
 [project.optional-dependencies]
