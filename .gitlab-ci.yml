@@ -6,6 +6,8 @@ stages:
 pages:
   stage: deploy
   script:
+    - apt-get update && apt-get install -y git
+    - python3 -m pip install --upgrade pip
     - python3 -m pip install sphinx git+https://github.com/bashtage/sphinx-material.git sphinx-tabs myst_parser
     - sphinx-build docs/src/ public/
   artifacts:
