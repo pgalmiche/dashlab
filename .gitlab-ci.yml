@@ -1,14 +1,12 @@
-image: python:3.10-slim
+image: python:3.11-slim
 
 stages:
   - deploy
 
 pages:
-  # tags:
-  #   - sphinx
   stage: deploy
   script:
-    - python3 -m pip install sphinx sphinx_rtd_theme sphinx-tabs myst_parser
+    - python3 -m pip install sphinx git+https://github.com/bashtage/sphinx-material.git sphinx-tabs myst_parser
     - sphinx-build docs/src/ public/
   artifacts:
     paths:
