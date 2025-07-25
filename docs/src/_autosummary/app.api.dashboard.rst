@@ -4,11 +4,6 @@
 .. automodule:: app.api.dashboard
 
    
-   
-   
-
-   
-   
    .. rubric:: Functions
 
    .. autosummary::
@@ -27,15 +22,3 @@
       require_login
       update_navbar
    
-   
-
-   
-   
-   
-
-   
-   
-   
-
-
-

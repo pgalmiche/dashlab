@@ -1,5 +1,5 @@
-DashLab
-=======
+Welcome to DashLab's documentation!
+===================================
 
 **DashLab** is a project aiming to provide a dashboard with user verification allowing access to current and future coding projects from anywhere.
 
