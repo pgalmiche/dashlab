@@ -3,7 +3,8 @@ services:
     container_name: dashlab-container
     build:
       context: ".."
-      dockerfile: ./docker/dev.Dockerfile
+      dockerfile: ./docker/Dockerfile
+      target: dev-env
     image: dashlab-dev:latest
     command: python3 -m app.main
     volumes:
@@ -11,9 +12,29 @@ services:
     ports:
       - 7777:7777
     networks:
-      - mynetwork # Attach to 'mynetwork'
+      - dashlab_network
     env_file:
       - "../.env"
+
+  dashlab-prod:
+    container_name: dashlab-prod-container
+    build:
+      context: ".."
+      dockerfile: ./docker/Dockerfile
+      target: runtime
+    image: dashlab-prod:latest
+    volumes:
+      - dashlab_code:/usr/src/app/:rw
+    ports:
+      - 7777:7777
+    networks:
+      - dashlab_network
+    env_file:
+      - "../.env"
+    environment:
+      DASH_ENV: "production"
+      DASH_DEBUG: "False"
+    restart: always
 
   mongo:
     image: mongo:latest # Official MongoDB image
@@ -26,7 +47,21 @@ services:
     volumes:
       - mongo_data:/data/db
     networks:
-      - mynetwork # Attach to 'mynetwork'
+      - dashlab_network
+    command: ["mongod", "--quiet"]
+
+  docs:
+    container_name: dashlab-docs
+    build:
+      context: ".."
+      dockerfile: ./docker/Dockerfile
+      target: dev-env
+    image: dashlab-dev:latest
+    ports:
+      - "8000:8000"
+    volumes:
+      - dashlab_code:/usr/src/app/:rw
+    command: ["bash", "/usr/src/app/scripts/build-and-serve-docs.sh"]
 
 volumes:
   dashlab_code:
@@ -47,5 +82,5 @@ volumes:
       device: ../mongo_data
 
 networks:
-  mynetwork:
+  dashlab_network:
     driver: bridge # Use bridge networking

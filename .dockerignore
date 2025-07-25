@@ -1,9 +1,13 @@
 .env
-uploaded_files/
-docker-compose.yml
-Dockerfile.dev
+.env.example
+/docs
+/tests
+/docker
+/scripts
 .dockerignore
 mongo_data/
 README.md
 **/__pycache__/
-**/flask_session
+.gitlab-ci.yml
+Caddyfile
+pytest.ini
