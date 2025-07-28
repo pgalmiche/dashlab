@@ -44,4 +44,3 @@ This manual validation allows me to:
 - Maintain a good user experience and stability for all active users
 
 Thank you for your understanding and interest in the project!
-

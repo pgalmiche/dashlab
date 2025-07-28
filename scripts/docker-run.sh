@@ -30,4 +30,3 @@ docker container prune -f
 docker volume prune -f
 
 echo "Cleanup complete."
-

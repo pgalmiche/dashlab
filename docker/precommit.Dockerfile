@@ -17,6 +17,3 @@ USER devuser
 
 # Set working directory inside container
 WORKDIR /usr/src/app
-
-
-

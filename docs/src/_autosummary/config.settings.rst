@@ -3,10 +3,9 @@
 
 .. automodule:: config.settings
 
-   
+
    .. rubric:: Classes
 
    .. autosummary::
-   
+
       Settings
-   

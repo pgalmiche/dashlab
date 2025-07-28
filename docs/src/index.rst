@@ -9,7 +9,7 @@ Features
 
 **DashLab** provides:
 
-* A dashboard with AWS Cognito Authentication 
+* A dashboard with AWS Cognito Authentication
 * Personalized access to various coding projects and tools
 * Automatic documentation tools like this one for the project
 

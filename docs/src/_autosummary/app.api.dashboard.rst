@@ -3,11 +3,11 @@
 
 .. automodule:: app.api.dashboard
 
-   
+
    .. rubric:: Functions
 
    .. autosummary::
-   
+
       callback
       dash_home
       generate_pages_links
@@ -21,4 +21,3 @@
       navbar
       require_login
       update_navbar
-   

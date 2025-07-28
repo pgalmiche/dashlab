@@ -61,6 +61,7 @@ services:
       - "8000:8000"
     volumes:
       - dashlab_code:/usr/src/app/:rw
+    user: "${UID:-1000}:${GID:-1000}"
     command: ["bash", "/usr/src/app/scripts/build-and-serve-docs.sh"]
 
   precommit:
@@ -73,7 +74,7 @@ services:
     volumes:
       - dashlab_code:/usr/src/app:rw
     user: "${UID:-1000}:${GID:-1000}"
-    command: ["pre-commit"]
+    command: ["pre-commit", "run", "--all-files"]
     # command: tail -f /dev/null # keep container running
     # tty: true
 

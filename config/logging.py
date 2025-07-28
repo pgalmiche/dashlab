@@ -14,7 +14,6 @@ Usage:
 Call `setup_logging()` early in your application startup to initialize logging.
 """
 
-import logging
 import sys
 from logging.config import dictConfig
 
@@ -23,24 +22,24 @@ from config.settings import settings  # Your settings module
 
 def setup_logging():
     """Configure logging for the application."""
-    log_level = "DEBUG" if settings.debug else "INFO"
+    log_level = 'DEBUG' if settings.debug else 'INFO'
 
     logging_config = {
-        "version": 1,
-        "disable_existing_loggers": False,  # Keep libraries' loggers active
-        "formatters": {
-            "standard": {
-                "format": "%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+        'version': 1,
+        'disable_existing_loggers': False,  # Keep libraries' loggers active
+        'formatters': {
+            'standard': {
+                'format': '%(asctime)s - %(name)s - %(levelname)s - %(message)s',
             },
-            "json": {
-                "format": '{"time": "%(asctime)s", "logger": "%(name)s", "level": "%(levelname)s", "message": "%(message)s"}',
+            'json': {
+                'format': '{"time": "%(asctime)s", "logger": "%(name)s", "level": "%(levelname)s", "message": "%(message)s"}',
             },
         },
-        "handlers": {
-            "console": {
-                "class": "logging.StreamHandler",
-                "stream": sys.stdout,
-                "formatter": "standard",
+        'handlers': {
+            'console': {
+                'class': 'logging.StreamHandler',
+                'stream': sys.stdout,
+                'formatter': 'standard',
             },
             # Optional: file handler example
             # "file": {
@@ -50,21 +49,21 @@ def setup_logging():
             #     "level": "INFO",
             # },
         },
-        "root": {
-            "handlers": ["console"],
-            "level": log_level,
+        'root': {
+            'handlers': ['console'],
+            'level': log_level,
         },
-        "loggers": {
+        'loggers': {
             # Disable noisy loggers if needed
-            "uvicorn.error": {
-                "level": "INFO",
-                "handlers": ["console"],
-                "propagate": False,
+            'uvicorn.error': {
+                'level': 'INFO',
+                'handlers': ['console'],
+                'propagate': False,
             },
-            "uvicorn.access": {
-                "level": "INFO",
-                "handlers": ["console"],
-                "propagate": False,
+            'uvicorn.access': {
+                'level': 'INFO',
+                'handlers': ['console'],
+                'propagate': False,
             },
         },
     }

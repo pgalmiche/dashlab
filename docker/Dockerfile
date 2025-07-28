@@ -42,4 +42,3 @@ COPY . .
 EXPOSE 7777
 
 CMD ["gunicorn", "-b", "0.0.0.0:7777", "app.api.dashboard:server"]
-
