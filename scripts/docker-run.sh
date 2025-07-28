@@ -6,8 +6,8 @@ shift
 SERVICES="$@"
 
 if [ -z "$COMPOSE_FILE" ] || [ -z "$SERVICES" ]; then
-  echo "Usage: $0 <compose-file> <service1> [service2 ...]"
-  exit 1
+    echo "Usage: $0 <compose-file> <service1> [service2 ...]"
+    exit 1
 fi
 
 echo "Starting services: $SERVICES using compose file: $COMPOSE_FILE"
