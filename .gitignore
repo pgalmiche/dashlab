@@ -3,3 +3,4 @@
 **/mongo_data/
 **/.env
 **/_autosummary/
+**/.ruff_cache
