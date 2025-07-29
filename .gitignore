@@ -1,6 +1,8 @@
-**/__pycache__
+__pycache__
 **/.ipynb_checkpoints
-**/mongo_data/
+mongo_data/
+.env
 **/.env
-**/_autosummary/
-**/.ruff_cache
+_autosummary/
+.ruff_cache/
+.pytest_cache/
