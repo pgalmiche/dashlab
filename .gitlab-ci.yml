@@ -43,7 +43,7 @@ deploy-to-ec2:
   only:
     - main
   script:
-    - echo "$SSH_PRIVATE_KEY" > $EC2_SSH_KEY
+    - echo "$SSH_PRIVATE_KEY_B64" | base64 -d > $EC2_SSH_KEY
     - chmod 400 $EC2_SSH_KEY
 
     - |
