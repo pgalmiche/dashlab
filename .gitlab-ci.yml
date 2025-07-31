@@ -20,7 +20,7 @@ build-dashlab-prod:
   only:
     - main
   before_script:
-    - apk add --no-cache curl bash
+    - apk add --no-cache curl python3 py3-pip bash
     - pip install awscli
   script:
     # Configure AWS CLI
@@ -42,7 +42,7 @@ deploy-to-ec2:
   only:
     - main
   before_script:
-    - apk add --no-cache curl bash openssh-client
+    - apk add --no-cache curl python3 py3-pip bash openssh-client
     - pip install awscli
   script:
     - echo "$SSH_PRIVATE_KEY_B64" | base64 -d > $EC2_SSH_KEY
