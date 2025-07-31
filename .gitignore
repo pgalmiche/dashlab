@@ -6,3 +6,5 @@ mongo_data/
 _autosummary/
 .ruff_cache/
 .pytest_cache/
+**.coverage
+htmlcov/

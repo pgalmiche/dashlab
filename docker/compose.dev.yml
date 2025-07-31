@@ -62,7 +62,25 @@ services:
     volumes:
       - dashlab_code:/usr/src/app/:rw
     user: "${UID:-1000}:${GID:-1000}"
-    command: ["bash", "/usr/src/app/scripts/build-and-serve-docs.sh"]
+    command: ["bash", "/usr/src/app/scripts/docs-build-and-serve.sh"]
+
+  tests:
+    container_name: dashlab-tests
+    build:
+      context: ".."
+      dockerfile: ./docker/Dockerfile
+      target: dev-env
+    image: dashlab-dev:latest
+    ports:
+      - "8000:8000"
+    volumes:
+      - dashlab_code:/usr/src/app/:rw
+    user: "${UID:-1000}:${GID:-1000}"
+    command: ["pytest"]
+    environment:
+      - PYTHONPATH=/usr/src/app
+      - DASH_ENV=testing
+      - DASH_DEBUG=False
 
   precommit:
     container_name: precommit-container
@@ -75,8 +93,6 @@ services:
       - dashlab_code:/usr/src/app:rw
     user: "${UID:-1000}:${GID:-1000}"
     command: ["pre-commit", "run", "--all-files"]
-    # command: tail -f /dev/null # keep container running
-    # tty: true
 
 volumes:
   dashlab_code:
