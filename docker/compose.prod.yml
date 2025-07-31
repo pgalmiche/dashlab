@@ -8,6 +8,20 @@ services:
     networks:
       - dashnet
 
+  mongo:
+    image: mongo:latest # Official MongoDB image
+    container_name: mongo_db
+    restart: always
+    env_file:
+      - ".env"
+    ports:
+      - "27017:27017" # Expose MongoDB default port
+    volumes:
+      - mongo_data:/data/db
+    networks:
+      - dashnet
+    command: ["mongod", "--quiet"]
+
   caddy:
     image: caddy:2
     restart: always
@@ -27,3 +41,11 @@ networks:
 volumes:
   caddy_data:
   caddy_config:
+  mongo_data:
+    labels:
+      project: dashlab
+    driver: local
+    driver_opts:
+      type: none
+      o: bind
+      device: ./mongo_data
