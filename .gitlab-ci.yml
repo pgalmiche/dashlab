@@ -63,6 +63,9 @@ deploy-to-ec2:
 
         echo "Restarting dashlab-prod container"
         docker compose -f "compose.prod.yml" up -d --no-deps dashlab-prod
+
+        echo "Cleaning up unused Docker images and containers"
+        docker system prune -af
       EOF
 
   dependencies:
