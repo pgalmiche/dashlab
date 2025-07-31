@@ -76,7 +76,8 @@ services:
     volumes:
       - dashlab_code:/usr/src/app/:rw
     user: "${UID:-1000}:${GID:-1000}"
-    command: ["pytest"]
+    command: >
+      sh -c "pytest; python3 -m http.server 8000 --directory /tmp/htmlcov"
     environment:
       - PYTHONPATH=/usr/src/app
       - DASH_ENV=testing
