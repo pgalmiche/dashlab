@@ -1,5 +1,5 @@
 dashlab.pierregalmiche.link {
-    reverse_proxy dashapp:7777
+    reverse_proxy dashlab-prod:7777
     tls pgalmiche9@gmail.com {
         ca https://acme-staging-v02.api.letsencrypt.org/directory
     }
