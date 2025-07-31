@@ -14,6 +14,7 @@ echo "Starting services: $SERVICES using compose file: $COMPOSE_FILE"
 
 # Build and start the specified services
 docker compose -f "$COMPOSE_FILE" up --build $SERVICES
+exit_code=$?
 
 echo "Services stopped or exited, cleaning up..."
 
@@ -30,3 +31,4 @@ docker container prune -f
 docker volume prune -f
 
 echo "Cleanup complete."
+exit $exit_code

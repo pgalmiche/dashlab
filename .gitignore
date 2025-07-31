@@ -3,7 +3,7 @@ __pycache__
 mongo_data/
 .env
 **/.env
-_autosummary/
+/docs/src/_autosummary/
 .ruff_cache/
 .pytest_cache/
 **.coverage
