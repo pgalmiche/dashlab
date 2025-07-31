@@ -62,7 +62,7 @@ deploy-to-ec2:
         cd /home/ubuntu
 
         echo "Restarting dashlab-prod container"
-        docker compose -f compose.prod.yml up -d --no-deps dashlab-prod
+        docker compose -f "compose.prod.yml" up -d --no-deps dashlab-prod
       EOF
 
   dependencies:
