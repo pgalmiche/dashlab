@@ -4,7 +4,7 @@ version = "1.0.0"
 description = "Dashboard made to call various personnal API and showcase some projects."
 authors = [{name = "Pierre Galmiche"}]
 readme = "README.md"
-license = {text = "MIT"}
+license = "MIT"
 requires-python = ">=3.11"
 
 dependencies = [
@@ -36,3 +36,10 @@ tests = [
 
 [tool.uv.sources]
 sphinx-material = { git = "https://github.com/bashtage/sphinx-material.git" }
+
+[tool.setuptools]
+packages = { find = {} }
+
+[tool.setuptools.packages.find]
+include = ["app"]
+exclude = ["docker", "config"]
