@@ -10,14 +10,10 @@ WORKDIR /usr/src/app
 RUN apt-get update && apt-get install -y git && rm -rf /var/lib/apt/lists/*
 
 # Copy dependency files only (no source code)
-COPY pyproject.toml requirements-dev.txt ./
+COPY pyproject.toml ./
 
 # Install prod + dev dependencies
-RUN uv pip install -r pyproject.toml --system
-RUN uv pip install -r requirements-dev.txt --system
-
-# Install Git-based dependencies separately (PEP 508 incompatible)
-RUN pip install git+https://github.com/bashtage/sphinx-material.git
+RUN uv pip install ".[docs, tests]" --system
 
 # No source copy here; code will be bind-mounted in dev
 

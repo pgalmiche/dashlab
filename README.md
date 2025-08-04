@@ -1,41 +1,29 @@
 # 🧪 DashLab
 
 [![pipeline status](https://gitlab.com/pgalmiche/dashlab/badges/main/pipeline.svg)](https://gitlab.com/pgalmiche/dashlab/-/pipelines)
+
 [![coverage report](https://gitlab.com/pgalmiche/dashlab/badges/main/coverage.svg)](https://gitlab.com/pgalmiche/dashlab/-/commits/main)
+
 [📘 View Documentation](https://pgalmiche.gitlab.io/dashlab/)
 
-______________________________________________________________________
+---
 
 ## 🧭 Overview
 
 **DashLab** is a unified and interactive dashboard designed to interface with various APIs.
 It serves as a developer-centric tool to **run**, **test**, and **visualize** multiple API endpoints from a centralized UI.
 
-Whether you're building microservices, automating workflows, or just need a quick way to trigger endpoints, DashLab provides an efficient and clean experience.
+My personal and daily used instance of **DashLab** is available at [https://dashlab.pierregalmiche.link/](https://dashlab.pierregalmiche.link/)
+Feel free to explore it !
 
-______________________________________________________________________
+For more insights into the project and its dependencies, check out [my wiki](https://wiki.pierregalmiche.link/Projects/DashLab/).
 
-## Overview
+👤 Want to know more about me and other things I build?  
+Check out my personal website at 👉 [https://pierregalmiche.link](https://pierregalmiche.link)
 
-**DashLab** is a unified dashboard to run and interact with various APIs — ideal for development, debugging, and centralized API visibility.
-
-______________________________________________________________________
+---
 
 ## 📦 Usage
-
-### 🔧 Run Dev Environment Locally
-
-To start the development dashboard on your machine:
-
-```bash
-bash ./scripts/dev-start.sh
-```
-
-Then, open your browser and visit: [http://0.0.0.0:7777](http://0.0.0.0:7777)
-
-______________________________________________________________________
-
-## 🧪 Common Scripts
 
 These helper scripts ensure consistent usage across environments:
 
@@ -46,6 +34,7 @@ These helper scripts ensure consistent usage across environments:
   ```
 
   Launches the dashboard in a local development environment.
+  Then, open your browser and visit: [http://0.0.0.0:7777](http://0.0.0.0:7777)
 
 - **Build production image** (for local test if you want)
 
@@ -71,23 +60,25 @@ These helper scripts ensure consistent usage across environments:
 
   Builds and serves the Sphinx documentation at [http://0.0.0.0:8000](http://0.0.0.0:8000)
 
-______________________________________________________________________
+---
 
-## 🚀 CI/CD Pipeline (GitLab)
+## 🚀 CI/CD Pipeline (GitLab):w
 
-The CI/CD pipeline is configured via GitLab and is automatically triggered on the `main` branch. It performs the following steps:
+The CI/CD pipeline is configured via GitLab and is automatically triggered on the `main` branch.
 
-1. **Build the production Docker image**
+It performs the following steps:
+
+1. **Build the production Docker image**:
    The latest commit is used to build the image using the `docker/Dockerfile` and tag it appropriately.
 
-1. **Push and deploy to EC2**
+1. **Push and deploy to EC2**:
    The image is pushed to AWS ECR and automatically deployed to the EC2 instance via SSH. The container is restarted with the new image version.
 
-1. **Generate and publish documentation**
+1. **Generate and publish documentation**:
    The Sphinx documentation is built and published to GitLab Pages.
    📄 View it here: [https://pgalmiche.gitlab.io/dashlab/](https://pgalmiche.gitlab.io/dashlab/)
 
-______________________________________________________________________
+---
 
 ## 🧷 Pre-commit Hook Setup
 
@@ -99,7 +90,7 @@ bash ./scripts/precommit-hook-install.sh
 
 This installs hooks that enforce code quality (e.g., linting, formatting) before any commit. The hooks run inside a containerized environment, ensuring all contributors use the same tooling.
 
-______________________________________________________________________
+---
 
 ## 📁 .env Configuration
 
@@ -114,7 +105,7 @@ cp .env.template .env
 
 Ensure you complete the required fields before starting the dashboard or running builds/tests.
 
-______________________________________________________________________
+---
 
 ## ✅ Best Practices
 
@@ -123,7 +114,7 @@ ______________________________________________________________________
 - Always run tests before pushing changes.
 - Use pre-commit hooks to catch issues early.
 
-______________________________________________________________________
+---
 
 ## 🛠️ Tech Stack
 
@@ -131,9 +122,9 @@ ______________________________________________________________________
 - Docker
 - GitLab CI/CD
 - AWS ECR & EC2
-- Sphinx for documentation
+- [Sphinx](https://www.sphinx-doc.org/en/master/) for documentation
 
-______________________________________________________________________
+---
 
 ## 🧳 License
 

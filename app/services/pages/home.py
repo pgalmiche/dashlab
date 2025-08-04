@@ -2,65 +2,94 @@ import dash
 from dash import Input, Output, dcc, html
 from flask import session
 
-dash.register_page(__name__, path='/', name='Home', order=0)
+dash.register_page(__name__, path="/", name="Home", order=0)
 
 layout = html.Div(
     children=[
-        dcc.Location(id='url', refresh=False),  # Needed to trigger callback
+        dcc.Location(id="url", refresh=False),  # Needed to trigger callback
         html.Div(
-            className='container py-5',
+            className="container py-5",
             children=[
-                html.H1('Welcome to DashLab 👋', className='fw-bold mb-3'),
+                html.H1("Welcome to DashLab 👋", className="fw-bold mb-3"),
                 html.P(
-                    'DashLab is a personal space for experimenting with data science tools, models, '
-                    'and visualizations using Plotly Dash.',
-                    className='lead',
+                    "DashLab is a personal space for experimenting with data science tools, models, "
+                    "and visualizations using Plotly Dash.",
+                    className="lead",
                 ),
                 html.P(
                     [
-                        'Explore interactive datasets, statistical summaries, and machine learning demos — all from one place.',
+                        "Explore interactive datasets, statistical summaries, and machine learning demos — all from one place.",
                         html.Br(),
                         html.Br(),
-                        '👤 Head over to my ',
+                        "👤 Visit my ",
                         html.A(
-                            'personal portfolio',
-                            href='https://pierregalmiche.link/about',
-                            target='_blank',
-                            className='text-primary',
+                            "personal portfolio",
+                            href="https://pierregalmiche.link/about",
+                            target="_blank",
+                            className="text-primary",
                         ),
-                        ' to discover more about who I am and what I’m working on.',
+                        " to learn more about who I am and what I’m working on.",
+                        html.Br(),
+                        html.Br(),
+                        "📘 Full project documentation is available on the ",
+                        html.A(
+                            "GitLab Page",
+                            href="https://pgalmiche.gitlab.io/dashlab/",
+                            target="_blank",
+                            className="text-primary",
+                        ),
+                        ".",
+                        html.Br(),
+                        "🧑‍💻 You can also explore the codebase and CI/CD pipelines on ",
+                        html.A(
+                            "GitLab",
+                            href="https://gitlab.com/pgalmiche/dashlab",
+                            target="_blank",
+                            className="text-primary",
+                        ),
+                        ".",
+                        html.Br(),
+                        html.Br(),
+                        "🛠️ To explore how I built this project and learn more about its dependencies, don't hesitate to visit my wiki: ",
+                        html.A(
+                            "MindShelf",
+                            href="https://wiki.pierregalmiche.link",
+                            target="_blank",
+                            className="text-primary",
+                        ),
+                        ".",
                     ],
-                    className='mb-4',
+                    className="mb-4",
                 ),
                 html.Div(
-                    className='alert alert-info',
+                    className="alert alert-info",
                     children=[
-                        '⚠️ Due to resource costs, users must be logged in to access projects.',
+                        "⚠️ Due to resource costs, users must be logged in to access projects.",
                         html.Br(),
-                        'You can log in by clicking on any project link below or by clicking the Login button.',
+                        "You can log in by clicking on any project link below or by clicking the Login button.",
                     ],
                 ),
                 html.Div(
                     html.P(
-                        '🔒 Authentication is required to access protected data pages.'
+                        "🔒 Authentication is required to access protected data pages."
                     ),
-                    className='text-muted',
+                    className="text-muted",
                 ),
-                html.H2('Available Sections', className='h4 mt-4 mb-3'),
+                html.H2("Available Sections", className="h4 mt-4 mb-3"),
                 html.Ul(
                     [
                         html.Li(
                             html.A(
-                                '📁 File Explorer',
-                                href='/file-explorer',
-                                className='link-primary',
+                                "📁 File Explorer",
+                                href="/file-explorer",
+                                className="link-primary",
                             )
                         ),
                     ],
-                    className='mb-4',
+                    className="mb-4",
                 ),
                 html.Div(
-                    id='auth-banner', className='mb-4'
+                    id="auth-banner", className="mb-4"
                 ),  # Dynamic auth banner here
             ],
         ),
@@ -68,30 +97,30 @@ layout = html.Div(
 )
 
 
-@dash.callback(Output('auth-banner', 'children'), Input('url', 'pathname'))
+@dash.callback(Output("auth-banner", "children"), Input("url", "pathname"))
 def update_auth_banner(_):
     try:
-        if 'user' in session:
+        if "user" in session:
 
-            user = session['user']
-            approved = user.get('custom:approved', 'false').lower()
-            if approved != 'true':
+            user = session["user"]
+            approved = user.get("custom:approved", "false").lower()
+            if approved != "true":
                 # Pending approval banner + logout button
                 return html.Div(
                     [
                         html.Div(
-                            className='alert alert-warning',
+                            className="alert alert-warning",
                             children=[
-                                '⏳ You are logged in, but your account is pending admin approval.',
+                                "⏳ You are logged in, but your account is pending admin approval.",
                                 html.Br(),
-                                'Please wait until an admin activates your account.',
+                                "Please wait until an admin activates your account.",
                             ],
                         ),
                         html.A(
-                            'Logout',
-                            href='/logout',
-                            className='btn btn-danger',
-                            role='button',
+                            "Logout",
+                            href="/logout",
+                            className="btn btn-danger",
+                            role="button",
                         ),
                     ]
                 )
@@ -100,18 +129,18 @@ def update_auth_banner(_):
                 return html.Div(
                     [
                         html.Div(
-                            className='alert alert-success',
+                            className="alert alert-success",
                             children=[
-                                '✅ You are logged in.',
+                                "✅ You are logged in.",
                                 html.Br(),
-                                'Have fun exploring the available projects!',
+                                "Have fun exploring the available projects!",
                             ],
                         ),
                         html.A(
-                            'Logout',
-                            href='/logout',
-                            className='btn btn-danger',
-                            role='button',
+                            "Logout",
+                            href="/logout",
+                            className="btn btn-danger",
+                            role="button",
                         ),
                     ]
                 )
@@ -123,10 +152,10 @@ def update_auth_banner(_):
     return html.Div(
         [
             html.A(
-                'Login',
-                href='/login',
-                className='btn btn-primary me-2',
-                role='button',
+                "Login",
+                href="/login",
+                className="btn btn-primary me-2",
+                role="button",
             ),
         ]
     )

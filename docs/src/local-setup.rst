@@ -15,7 +15,7 @@ To start the DashLab development environment, simply run the provided script:
 
 .. code-block:: bash
 
-   bash ./scripts/start-dev.sh
+   bash ./scripts/dev-start.sh
 
 This will launch the necessary services (including the dashboard and database) using Docker Compose with live reloads for development.
 
@@ -36,7 +36,7 @@ To run DashLab locally without Docker, follow these steps:
 
    .. code-block:: bash
 
-      uv pip install -r pyproject.toml --system
+      uv pip install ".[docs, tests]" --system
 
 3. Run the application:
 

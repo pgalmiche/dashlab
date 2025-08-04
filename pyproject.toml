@@ -19,9 +19,21 @@ dependencies = [
   "requests-oauthlib",
   "PyJWT",
   "pydantic",
-  "pydantic-settings",
+  "pydantic-settings"
 ]
 
-[build-system]
-requires = ["setuptools>=61,<81", "wheel>=0.38"]
-build-backend = "setuptools.build_meta"
+[project.optional-dependencies]
+docs = [
+  "sphinx",
+  "sphinx-tabs",
+  "sphinx-material"
+]
+tests = [
+  "pytest",
+  "pytest-cov",
+  "pytest-mock"
+]
+
+[tool.uv.sources]
+sphinx-material = { git = "https://github.com/bashtage/sphinx-material.git" }
+

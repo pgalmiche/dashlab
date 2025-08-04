@@ -3,7 +3,6 @@ Welcome to DashLab's documentation!
 
 **DashLab** is a project aiming to provide a dashboard with user verification allowing access to current and future coding projects from anywhere.
 
-
 Features
 --------
 
@@ -13,15 +12,13 @@ Features
 * Personalized access to various coding projects and tools
 * Automatic documentation tools like this one for the project
 
-.. note::
-   The folder/files organization has been inspired by the SimExporter GitHub project
-   make by Robin Enjalbert.
+Links
+-----
 
-Gallery
--------
-
-.. image:: _static/repository.png
-
+- 👤 `Personal Website <https://pierregalmiche.link>`_
+- 📦 `Current Version on GitLab <https://gitlab.com/pgalmiche/dashlab/>`_
+- 🚀 `Live Demo <https://dashlab.pierregalmiche.link/>`_
+- 🧠 `MindShelf (Wiki) - Project and Dependencies <https://wiki.pierregalmiche.link/Projects/DashLab/>`_
 
 
 .. toctree::

@@ -9,11 +9,48 @@ variables:
   IMAGE_TAG: $CI_COMMIT_SHORT_SHA
   EC2_USER: ubuntu
   EC2_SSH_KEY: /tmp/deploy_key.pem
+  UV_VERSION: 0.8.4
+  PYTHON_VERSION: 3.12
+  BASE_LAYER: bookworm-slim
+  UV_CACHE_DIR: .uv-cache
+  UV_SYSTEM_PYTHON: 1
 
 stages:
+  - precommit
+  - test
   - build
   - deploy
   - deploy-docs
+
+pre-commit:
+  stage: precommit
+  image: python:$PYTHON_VERSION-$BASE_LAYER
+  script:
+    - pip install pre-commit
+    - pre-commit run --all-files
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == "main"
+
+pytest:
+  stage: test
+  image: ghcr.io/astral-sh/uv:$UV_VERSION-python$PYTHON_VERSION-$BASE_LAYER
+  cache:
+    - key:
+        files:
+          - pyproject.toml
+      paths:
+        - $UV_CACHE_DIR
+  script:
+    - uv pip install ".[tests]" --system
+    - pytest
+  artifacts:
+    paths:
+      - /htmlcov/
+  coverage: /TOTAL.*? (100(?:\.0+)?\%|[1-9]?\d(?:\.\d+)?\%)$/
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == "main"
 
 build-dashlab-prod:
   stage: build
