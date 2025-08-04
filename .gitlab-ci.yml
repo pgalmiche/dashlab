@@ -24,7 +24,7 @@ stages:
 
 pre-commit:
   stage: precommit
-  image: python:$PYTHON_VERSION-$BASE_LAYER
+  image: python:$PYTHON_VERSION
   script:
     - pip install pre-commit
     - pre-commit run --all-files
