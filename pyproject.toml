@@ -37,6 +37,11 @@ tests = [
 [tool.uv.sources]
 sphinx-material = { git = "https://github.com/bashtage/sphinx-material.git" }
 
+[tool.setuptools]
+
+[tool.setuptools.packages.find]
+include = ["app", "config"]
+
 [build-system]
 requires = ["setuptools>=61,<81", "wheel>=0.38"]
 build-backend = "setuptools.build_meta"

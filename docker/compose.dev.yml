@@ -7,6 +7,8 @@ services:
       target: dev-env
     image: dashlab-dev:latest
     command: python3 -m app.main
+    environment:
+      - PYTHONPATH=/usr/src/app/src
     volumes:
       - dashlab_code:/usr/src/app/:rw
     ports:
@@ -32,8 +34,9 @@ services:
     env_file:
       - "../.env"
     environment:
-      DASH_ENV: "production"
-      DASH_DEBUG: "False"
+      - PYTHONPATH=/usr/src/app/src
+      - DASH_ENV="production"
+      - DASH_DEBUG=False
     restart: always
 
   mongo:
@@ -63,6 +66,8 @@ services:
       - dashlab_code:/usr/src/app/:rw
     user: "${UID:-1000}:${GID:-1000}"
     command: ["bash", "/usr/src/app/scripts/docs-build-and-serve.sh"]
+    environment:
+      - PYTHONPATH=/usr/src/app/src
 
   tests:
     container_name: dashlab-tests
@@ -79,7 +84,7 @@ services:
     command: >
       sh -c "pytest; python3 -m http.server 8000 --directory /tmp/htmlcov"
     environment:
-      - PYTHONPATH=/usr/src/app
+      - PYTHONPATH=/usr/src/app/src
       - DASH_ENV=testing
       - DASH_DEBUG=False
 
