@@ -35,6 +35,8 @@ pre-commit:
 pytest:
   stage: test
   image: ghcr.io/astral-sh/uv:$UV_VERSION-python$PYTHON_VERSION-$BASE_LAYER
+  variables:
+    PYTHONPATH: "./src"
   cache:
     - key:
         files:
