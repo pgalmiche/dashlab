@@ -36,4 +36,3 @@ tests = [
 
 [tool.uv.sources]
 sphinx-material = { git = "https://github.com/bashtage/sphinx-material.git" }
-

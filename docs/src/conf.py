@@ -13,13 +13,13 @@
 import sys
 from os.path import abspath
 
-sys.path.insert(0, abspath("../.."))
+sys.path.insert(0, abspath('../..'))
 
 # -- Project information -----------------------------------------------------
 
-project = "DashLab"
-copyright = "Pierre Galmiche, 2025"
-author = "Pierre Galmiche"
+project = 'DashLab'
+copyright = 'Pierre Galmiche, 2025'
+author = 'Pierre Galmiche'
 
 # -- General configuration ---------------------------------------------------
 
@@ -27,26 +27,26 @@ author = "Pierre Galmiche"
 # extensions coming with Sphinx (named 'sphinx.ext.*') or your custom
 # ones.
 extensions = [
-    "sphinx.ext.duration",
-    "sphinx.ext.autodoc",
-    "sphinx.ext.intersphinx",
-    "sphinx.ext.autosummary",
-    "sphinx.ext.viewcode",
-    "sphinx.ext.extlinks",
-    "sphinx_tabs.tabs",
+    'sphinx.ext.duration',
+    'sphinx.ext.autodoc',
+    'sphinx.ext.intersphinx',
+    'sphinx.ext.autosummary',
+    'sphinx.ext.viewcode',
+    'sphinx.ext.extlinks',
+    'sphinx_tabs.tabs',
 ]
 
 autosummary_generate = True
 autodoc_default_options = {
-    "members": True,
-    "undoc-members": True,
-    "show-inheritance": True,
-    "inherited-members": True,
+    'members': True,
+    'undoc-members': True,
+    'show-inheritance': True,
+    'inherited-members': True,
 }
 
 intersphinx_mapping = {
-    "python": ("https://docs.python.org/3/", None),
-    "sphinx": ("https://www.sphinx-doc.org/en/master/", None),
+    'python': ('https://docs.python.org/3/', None),
+    'sphinx': ('https://www.sphinx-doc.org/en/master/', None),
 }
 
 # Add any paths that contain templates here, relative to this directory.
@@ -55,57 +55,57 @@ intersphinx_mapping = {
 # List of patterns, relative to source directory, that match files and
 # directories to ignore when looking for source files.
 # This pattern also affects html_static_path and html_extra_path.
-exclude_patterns = ["_build", "Thumbs.db", ".DS_Store", "./tests"]
+exclude_patterns = ['_build', 'Thumbs.db', '.DS_Store', './tests']
 
 # -- Options for HTML output -------------------------------------------------
 
 # The theme to use for HTML and HTML Help pages.  See the documentation for
 # a list of builtin themes.
 #
-html_theme = "sphinx_material"
+html_theme = 'sphinx_material'
 html_sidebars = {
-    "**": ["logo-text.html", "globaltoc.html", "localtoc.html", "searchbox.html"]
+    '**': ['logo-text.html', 'globaltoc.html', 'localtoc.html', 'searchbox.html']
 }
 # Material theme options (see theme.conf for more information)
 html_theme_options = {
     # Set the name of the project to appear in the navigation.
-    "nav_title": "DashLab - A UI for cool projects.",
+    'nav_title': 'DashLab - A UI for cool projects.',
     # Set you GA account ID to enable tracking
     # "google_analytics_account": "UA-XXXXX",
     # Specify a base_url used to generate sitemap.xml. If not
     # specified, then no sitemap will be built.
     # "base_url": "https://project.github.io/project",
     # Set the color and the accent color
-    "color_primary": "purple",
-    "color_accent": "light-blue",
+    'color_primary': 'purple',
+    'color_accent': 'light-blue',
     # Set the repo location to get a badge with stats
-    "repo_url": "https://gitlab.com/pgalmiche/dashlab",
-    "repo_name": "DashLab",
+    'repo_url': 'https://gitlab.com/pgalmiche/dashlab',
+    'repo_name': 'DashLab',
     # Visible levels of the global TOC; -1 means unlimited
-    "globaltoc_depth": 2,
+    'globaltoc_depth': 2,
     # If False, expand all TOC entries
-    "globaltoc_collapse": False,
+    'globaltoc_collapse': False,
     # If True, show hidden TOC entries
-    "globaltoc_includehidden": True,
-    "html_minify": True,
-    "css_minify": True,
-    "logo_icon": "&#xea4b;",
+    'globaltoc_includehidden': True,
+    'html_minify': True,
+    'css_minify': True,
+    'logo_icon': '&#xea4b;',
 }
 
 # Add any paths that contain custom static files (such as style sheets) here,
 # relative to this directory. They are copied after the builtin static files,
 # so a file named "default.css" will overwrite the builtin "default.css".
-html_static_path = ["_static"]
+html_static_path = ['_static']
 # html_css_files = ["theme.css"]
-master_doc = "index"
+master_doc = 'index'
 
 extlinks = {
-    "K3D": ("http://www.k3d-jupyter.org/%s", "%s"),
-    "Numpy": ("https://numpy.org/%s", "%s"),
-    "Vedo": ("https://vedo.embl.es/%s", "%s"),
-    "Colour": ("https://github.com/vaab/colour/%s", "%s"),
-    "SimExporter": ("https://github.com/RobinEnjalbert/SimExporter/%s", "%s"),
-    "Docker": ("https://www.docker.com/%s", "%s"),
+    'K3D': ('http://www.k3d-jupyter.org/%s', '%s'),
+    'Numpy': ('https://numpy.org/%s', '%s'),
+    'Vedo': ('https://vedo.embl.es/%s', '%s'),
+    'Colour': ('https://github.com/vaab/colour/%s', '%s'),
+    'SimExporter': ('https://github.com/RobinEnjalbert/SimExporter/%s', '%s'),
+    'Docker': ('https://www.docker.com/%s', '%s'),
 }
 
-autodoc_mock_imports = ["vtk", "vedo"]
+autodoc_mock_imports = ['vtk', 'vedo']

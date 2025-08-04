@@ -6,7 +6,7 @@
 
 [📘 View Documentation](https://pgalmiche.gitlab.io/dashlab/)
 
----
+______________________________________________________________________
 
 ## 🧭 Overview
 
@@ -18,10 +18,10 @@ Feel free to explore it !
 
 For more insights into the project and its dependencies, check out [my wiki](https://wiki.pierregalmiche.link/Projects/DashLab/).
 
-👤 Want to know more about me and other things I build?  
+👤 Want to know more about me and other things I build?
 Check out my personal website at 👉 [https://pierregalmiche.link](https://pierregalmiche.link)
 
----
+______________________________________________________________________
 
 ## 📦 Usage
 
@@ -60,7 +60,7 @@ These helper scripts ensure consistent usage across environments:
 
   Builds and serves the Sphinx documentation at [http://0.0.0.0:8000](http://0.0.0.0:8000)
 
----
+______________________________________________________________________
 
 ## 🚀 CI/CD Pipeline (GitLab):w
 
@@ -78,7 +78,7 @@ It performs the following steps:
    The Sphinx documentation is built and published to GitLab Pages.
    📄 View it here: [https://pgalmiche.gitlab.io/dashlab/](https://pgalmiche.gitlab.io/dashlab/)
 
----
+______________________________________________________________________
 
 ## 🧷 Pre-commit Hook Setup
 
@@ -90,7 +90,7 @@ bash ./scripts/precommit-hook-install.sh
 
 This installs hooks that enforce code quality (e.g., linting, formatting) before any commit. The hooks run inside a containerized environment, ensuring all contributors use the same tooling.
 
----
+______________________________________________________________________
 
 ## 📁 .env Configuration
 
@@ -105,7 +105,7 @@ cp .env.template .env
 
 Ensure you complete the required fields before starting the dashboard or running builds/tests.
 
----
+______________________________________________________________________
 
 ## ✅ Best Practices
 
@@ -114,7 +114,7 @@ Ensure you complete the required fields before starting the dashboard or running
 - Always run tests before pushing changes.
 - Use pre-commit hooks to catch issues early.
 
----
+______________________________________________________________________
 
 ## 🛠️ Tech Stack
 
@@ -124,7 +124,7 @@ Ensure you complete the required fields before starting the dashboard or running
 - AWS ECR & EC2
 - [Sphinx](https://www.sphinx-doc.org/en/master/) for documentation
 
----
+______________________________________________________________________
 
 ## 🧳 License
 
