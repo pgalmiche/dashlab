@@ -13,7 +13,7 @@ cat > "$HOOK_PATH" <<EOF
 # Run pre-commit inside Docker Compose with proper user permissions
 
 # Run pre-commit inside Docker Compose and capture exit code
-bash ./scripts/docker-run.sh docker/compose.dev.yml precommit
+bash ./scripts/docker-run-container.sh docker/compose.dev.yml precommit
 exit_code=\$?
 exit \$exit_code
 

@@ -23,28 +23,44 @@ from pydantic_settings import BaseSettings
 
 
 class Settings(BaseSettings):
-    secret_key: str = Field(..., alias='SECRET_KEY')
+    secret_key: str = Field(default='secret_key', alias='SECRET_KEY')
     debug: bool = Field(default=False, alias='DASH_DEBUG')
     env: str = Field(default='development', alias='DASH_ENV')
 
     # Cognito settings
-    cognito_client_id: str = Field(..., alias='COGNITO_CLIENT_ID')
-    cognito_client_secret: str = Field(..., alias='COGNITO_CLIENT_SECRET')
-    cognito_domain: str = Field(..., alias='COGNITO_DOMAIN')
-    cognito_redirect_uri: str = Field(..., alias='COGNITO_REDIRECT_URI')
+    cognito_client_id: str = Field(default='client_id', alias='COGNITO_CLIENT_ID')
+    cognito_client_secret: str = Field(
+        default='client_secret', alias='COGNITO_CLIENT_SECRET'
+    )
+    cognito_domain: str = Field(default='cognito_domain', alias='COGNITO_DOMAIN')
+    cognito_redirect_uri: str = Field(
+        default='redirect_url', alias='COGNITO_REDIRECT_URI'
+    )
     cognito_logout_uri: str = Field(
         default='http://localhost:7777', alias='COGNITO_LOGOUT_URI'
     )
-    cognito_user_pool_id: str = Field(..., alias='COGNITO_USER_POOL_ID')
+    cognito_user_pool_id: str = Field(
+        default='user_pool_id', alias='COGNITO_USER_POOL_ID'
+    )
 
     # AWS / Mongo / Other APIs
-    aws_access_key_id: str = Field(..., alias='AWS_ACCESS_KEY_ID')
-    aws_secret_access_key: str = Field(..., alias='AWS_SECRET_ACCESS_KEY')
-    aws_region: str = Field(..., alias='AWS_REGION')
+    aws_access_key_id: str = Field(
+        default='aws_access_key_id', alias='AWS_ACCESS_KEY_ID'
+    )
+    aws_secret_access_key: str = Field(
+        default='secret_access_key', alias='AWS_SECRET_ACCESS_KEY'
+    )
+    aws_region: str = Field(default='aws_region', alias='AWS_REGION')
 
-    mongo_initdb_root_username: str = Field(..., alias='MONGO_INITDB_ROOT_USERNAME')
-    mongo_initdb_root_password: str = Field(..., alias='MONGO_INITDB_ROOT_PASSWORD')
-    mongo_initdb_database: str = Field(..., alias='MONGO_INITDB_DATABASE')
+    mongo_initdb_root_username: str = Field(
+        default='mongo_username', alias='MONGO_INITDB_ROOT_USERNAME'
+    )
+    mongo_initdb_root_password: str = Field(
+        default='mongo_password', alias='MONGO_INITDB_ROOT_PASSWORD'
+    )
+    mongo_initdb_database: str = Field(
+        default='mongo_initdb', alias='MONGO_INITDB_DATABASE'
+    )
 
     # OAuthlib setting (optional)
     oauthlib_insecure_transport: str = Field(
@@ -52,7 +68,7 @@ class Settings(BaseSettings):
     )
 
     # CI/CD env
-    image_tag: str = Field(..., alias='IMAGE_TAG')
+    image_tag: str = Field(default='latest', alias='IMAGE_TAG')
 
     model_config = ConfigDict(env_file='.env', extra='forbid', frozen=True)
 
