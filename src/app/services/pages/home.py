@@ -5,7 +5,10 @@ from flask import session
 from config.settings import settings  # Adjust import if your settings are elsewhere
 
 image_tag = getattr(settings, 'image_tag', 'unknown')
-commit_url = f'https://gitlab.com/pgalmiche/dashlab/-/commit/{image_tag}'
+if image_tag.startswith('v'):  # or some other way to detect a tag
+    commit_link = f'https://gitlab.com/pgalmiche/dashlab/-/tags/{image_tag}'
+else:
+    commit_link = f'https://gitlab.com/pgalmiche/dashlab/-/commit/{image_tag}'
 
 
 dash.register_page(__name__, path='/', name='Home', order=0)
@@ -101,7 +104,7 @@ layout = html.Div(
                         ' — corresponds to commit ',
                         html.A(
                             image_tag,
-                            href=commit_url,
+                            href=commit_link,
                             target='_blank',
                             className='text-primary',
                         ),
