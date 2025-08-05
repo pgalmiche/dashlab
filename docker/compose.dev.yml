@@ -68,6 +68,7 @@ services:
     command: ["bash", "/usr/src/app/scripts/docs-build-and-serve.sh"]
     environment:
       - PYTHONPATH=/usr/src/app/src
+      - IMAGE_TAG="dev_image"
 
   tests:
     container_name: dashlab-tests

@@ -11,7 +11,14 @@
 # documentation root, use os.path.abspath to make it absolute, like shown here.
 
 import sys
+from os import getenv
 from os.path import abspath
+
+image_tag = getenv('IMAGE_TAG', 'unknown')
+
+rst_prolog = f"""
+.. |image_tag| replace:: {image_tag}
+"""
 
 sys.path.insert(0, abspath('../..'))
 

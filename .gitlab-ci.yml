@@ -36,7 +36,7 @@ pytest:
   stage: test
   image: ghcr.io/astral-sh/uv:$UV_VERSION-python$PYTHON_VERSION-$BASE_LAYER
   variables:
-    PYTHONPATH: "./src"
+    PYTHONPATH: "$CI_PROJECT_DIR/src"
   cache:
     - key:
         files:
@@ -120,6 +120,8 @@ pages:
     - python3 -m pip install --upgrade pip
     - python3 -m pip install sphinx git+https://github.com/bashtage/sphinx-material.git sphinx-tabs myst_parser
     - sphinx-build docs/src/ public/
+  variables:
+    PYTHONPATH: "$CI_PROJECT_DIR/src"
   artifacts:
     paths:
       - public

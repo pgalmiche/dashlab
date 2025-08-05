@@ -2,6 +2,12 @@ import dash
 from dash import Input, Output, dcc, html
 from flask import session
 
+from config.settings import settings  # Adjust import if your settings are elsewhere
+
+image_tag = getattr(settings, 'image_tag', 'unknown')
+commit_url = f'https://gitlab.com/pgalmiche/dashlab/-/commit/{image_tag}'
+
+
 dash.register_page(__name__, path='/', name='Home', order=0)
 
 layout = html.Div(
@@ -87,6 +93,21 @@ layout = html.Div(
                         ),
                     ],
                     className='mb-4',
+                ),
+                html.P(
+                    [
+                        'Current image version: ',
+                        html.Code(image_tag),
+                        ' — corresponds to commit ',
+                        html.A(
+                            image_tag,
+                            href=commit_url,
+                            target='_blank',
+                            className='text-primary',
+                        ),
+                        ' on GitLab project.',
+                    ],
+                    className='mt-3',
                 ),
                 html.Div(
                     id='auth-banner', className='mb-4'

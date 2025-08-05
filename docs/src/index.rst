@@ -3,6 +3,11 @@ Welcome to DashLab's documentation!
 
 **DashLab** is a project aiming to provide a dashboard with user verification allowing access to current and future coding projects from anywhere.
 
+
+Image tag currently in production: |image_tag|
+
+This corresponds to the GitLab project `CI_COMMIT_SHORT_SHA` variable.
+
 Features
 --------
 
