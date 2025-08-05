@@ -29,11 +29,10 @@ import jwt
 from dash import Dash, dcc, html, page_container, page_registry
 from dash.dependencies import Input, Output
 from flask import Flask, redirect, request, session
+from flask_session import Session
 from requests_oauthlib import OAuth2Session
 
-# from app.services.pages.file_explorer import register_file_explorer_page
 from config.settings import settings
-from flask_session import Session
 
 # --- Configuration constants ---
 DEBUG_MODE = settings.debug
@@ -172,8 +171,6 @@ app = Dash(
     url_base_pathname='/',
     meta_tags=[{'name': 'viewport', 'content': 'width=device-width, initial-scale=1'}],
 )
-
-# register_file_explorer_page()
 
 
 # --- Route to render Dash app at root ---

@@ -25,7 +25,7 @@ from pydantic_settings import BaseSettings
 class Settings(BaseSettings):
     secret_key: str = Field(default='secret_key', alias='SECRET_KEY')
     debug: bool = Field(default=False, alias='DASH_DEBUG')
-    env: str = Field(default='development', alias='DASH_ENV')
+    env: str = Field(default='testing', alias='DASH_ENV')
 
     # Cognito settings
     cognito_client_id: str = Field(default='client_id', alias='COGNITO_CLIENT_ID')
