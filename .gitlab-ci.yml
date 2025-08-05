@@ -10,7 +10,7 @@ variables:
   EC2_USER: ubuntu
   EC2_SSH_KEY: /tmp/deploy_key.pem
   UV_VERSION: 0.8.4
-  PYTHON_VERSION: 3.12
+  PYTHON_VERSION: 3.11
   BASE_LAYER: bookworm-slim
   UV_CACHE_DIR: .uv-cache
   UV_SYSTEM_PYTHON: 1
