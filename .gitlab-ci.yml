@@ -31,6 +31,8 @@ pre-commit:
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     - if: $CI_COMMIT_BRANCH == "main"
+    - if: $CI_COMMIT_BRANCH == "dev"
+    - if: $CI_COMMIT_BRANCH == "hotfix"
 
 pytest:
   stage: test
@@ -53,6 +55,8 @@ pytest:
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     - if: $CI_COMMIT_BRANCH == "main"
+    - if: $CI_COMMIT_BRANCH == "dev"
+    - if: $CI_COMMIT_BRANCH == "hotfix"
 
 build-dashlab-prod:
   stage: build

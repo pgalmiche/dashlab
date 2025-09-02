@@ -4,7 +4,6 @@ import pytest
 
 from app.services.pages.file_explorer import (
     AWS_REGION,
-    S3_BUCKET_NAME,
     delete_entries_by_path,
     delete_file_from_s3,
     fetch_all_files,
@@ -15,6 +14,8 @@ from app.services.pages.file_explorer import (
     save_file,
     store_file_metadata,
 )
+
+S3_BUCKET_NAME = 'dashlab-bucket'
 
 
 @pytest.fixture
@@ -68,7 +69,7 @@ def test_generate_presigned_url_failure(mock_presign):
 
 @patch('app.services.pages.file_explorer.s3_client.put_object')
 def test_save_file(mock_put):
-    result = save_file(b'hello', 'test.txt', 'folder')
+    result = save_file(S3_BUCKET_NAME, b'hello', 'test.txt', 'folder')
     expected_url = generate_s3_url(S3_BUCKET_NAME, 'folder/test.txt', AWS_REGION)
     assert result == expected_url
     mock_put.assert_called_once()
@@ -84,7 +85,7 @@ def test_store_file_metadata(mock_get_collection):
 
 @patch('app.services.pages.file_explorer.s3_client.delete_object')
 def test_delete_file_from_s3(mock_delete):
-    delete_file_from_s3('somefile.txt')
+    delete_file_from_s3(S3_BUCKET_NAME, 'somefile.txt')
     mock_delete.assert_called_once_with(Bucket=S3_BUCKET_NAME, Key='somefile.txt')
 
 
@@ -93,7 +94,9 @@ def test_delete_file_from_s3(mock_delete):
 def test_delete_entries_by_path(mock_delete, mock_get_collection):
     mock_collection = MagicMock()
     mock_get_collection.return_value = mock_collection
-    delete_entries_by_path(['https://bucket.s3.amazonaws.com/folder/file.txt'])
+    delete_entries_by_path(
+        S3_BUCKET_NAME, ['https://bucket.s3.amazonaws.com/folder/file.txt']
+    )
     mock_delete.assert_called_once()
     mock_collection.delete_many.assert_called_once()
 
@@ -112,7 +115,7 @@ def test_list_s3_folders(mock_list):
     mock_list.return_value = {
         'CommonPrefixes': [{'Prefix': 'folder1/'}, {'Prefix': 'folder2/'}]
     }
-    folders = list_s3_folders()
+    folders = list_s3_folders(S3_BUCKET_NAME)
     assert folders == ['', 'folder1', 'folder2']
 
 
