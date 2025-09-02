@@ -25,6 +25,8 @@ Usage:
 Run the Flask server which serves both the OAuth routes and the Dash app.
 """
 
+import logging
+
 import jwt
 from dash import Dash, dcc, html, page_container, page_registry
 from dash.dependencies import Input, Output
@@ -32,7 +34,11 @@ from flask import Flask, redirect, request, session
 from flask_session import Session
 from requests_oauthlib import OAuth2Session
 
+from config.logging import setup_logging
 from config.settings import settings
+
+setup_logging()
+logger = logging.getLogger(__name__)
 
 # --- Configuration constants ---
 DEBUG_MODE = settings.debug
@@ -100,6 +106,26 @@ def callback():
         session['user'] = decoded
     else:
         session['user'] = cognito.get(USERINFO_URL).json()
+
+    logger.debug(f"session of user: {session['user']}")
+
+    def compute_allowed_buckets(user: dict) -> dict:
+        bucket_attribute_map = {
+            'splitbox-bucket': 'custom:splitbox-access',
+            'personnal-files-pg': 'custom:personnal-files-pg',
+            'dashlab-bucket': 'custom:approved',
+        }
+        buckets = {
+            bucket: 'us-east-1'
+            for bucket, attr in bucket_attribute_map.items()
+            if user.get(attr, 'false').lower() == 'true'
+        }
+        logger.debug(f'buckets found for this used: {buckets}')
+
+        return buckets
+
+    session['ALLOWED_BUCKETS'] = compute_allowed_buckets(session['user'])
+    session['DEFAULT_BUCKET'] = next(iter(session['ALLOWED_BUCKETS']), None)
 
     return redirect('/')
 

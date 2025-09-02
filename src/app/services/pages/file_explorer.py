@@ -10,6 +10,7 @@ from botocore.exceptions import BotoCoreError, ClientError
 from dash import callback, callback_context, dcc, html
 from dash.dependencies import Input, Output, State
 from dash.exceptions import PreventUpdate
+from flask import session
 from pymongo import MongoClient
 from pymongo.errors import ServerSelectionTimeoutError
 
@@ -18,7 +19,6 @@ from config.settings import settings
 
 setup_logging()
 logger = logging.getLogger(__name__)
-
 
 if settings.env != 'testing':
     dash.register_page(
@@ -29,6 +29,33 @@ if settings.env != 'testing':
     )
 
 
+def get_user_allowed_buckets():
+    """Return allowed buckets from the current user session."""
+    if 'ALLOWED_BUCKETS' in session:
+        return session['ALLOWED_BUCKETS']
+    # fallback
+    return {'splitbox-bucket': 'us-east-1'}
+
+
+def bucket_dropdown(layout_id: str):
+    """Create a dropdown component for buckets."""
+    # Do NOT access session here at import time.
+    # Return a function that will be called when rendering the layout.
+    return html.Div(
+        id=layout_id,
+        children=[
+            dcc.Dropdown(
+                id=layout_id,
+                # Use callback to populate options dynamically
+                options=[],
+                value=None,
+                clearable=False,
+                style={'width': '300px'},
+            )
+        ],
+    )
+
+
 MONGO_URI = (
     f'mongodb://{settings.mongo_initdb_root_username}:'
     f'{settings.mongo_initdb_root_password}@mongo_db:27017/'
@@ -36,8 +63,15 @@ MONGO_URI = (
 )
 
 # AWS S3 Configuration
-S3_BUCKET_NAME = 'personnal-files-pg'
 AWS_REGION = 'us-east-1'
+
+# Initialize boto3 S3 client
+s3_client = boto3.client(
+    's3',
+    aws_access_key_id=settings.aws_access_key_id,
+    aws_secret_access_key=settings.aws_secret_access_key,
+    region_name=AWS_REGION,
+)
 
 # Page layout definition
 layout = html.Div(
@@ -48,10 +82,10 @@ layout = html.Div(
                     label='Upload Files',
                     children=[
                         html.H2('Upload Files'),
-                        html.Label('Storage is done on S3 buckets:'),
+                        html.Label('Select the S3 bucket you want to use:'),
+                        bucket_dropdown(layout_id='upload-bucket-selector'),
                         html.Br(),
-                        html.Br(),
-                        html.Label('Select Existing Folder:'),
+                        html.Label('Select an existing folder:'),
                         dcc.Dropdown(
                             id='folder-dropdown',
                             options=[],
@@ -60,7 +94,8 @@ layout = html.Div(
                             style={'width': '300px'},
                         ),
                         html.Br(),
-                        html.Label('Or Create New Folder:'),
+                        html.Label('Or Create a new one:'),
+                        html.Br(),
                         dcc.Input(
                             id='new-folder-name',
                             type='text',
@@ -69,10 +104,13 @@ layout = html.Div(
                         ),
                         html.Br(),
                         html.Br(),
+                        html.Label('You also can add tags to your file:'),
+                        html.Br(),
                         dcc.Input(
                             id='file-tags',
                             type='text',
                             placeholder='Enter tags (comma-separated)',
+                            style={'width': '400px'},
                         ),
                         html.Br(),
                         html.Br(),
@@ -90,33 +128,11 @@ layout = html.Div(
                     ],
                 ),
                 dcc.Tab(
-                    label='Database entries',
-                    children=[
-                        html.H3('Database Entries'),
-                        html.Div(id='database-entries-list'),
-                        html.Label('Enter file paths to Delete (comma-separated):'),
-                        html.Br(),
-                        html.Br(),
-                        dcc.Input(
-                            id='delete-paths-input',
-                            type='text',
-                            placeholder='Enter file paths to delete',
-                        ),
-                        html.Br(),
-                        html.Br(),
-                        html.Button(
-                            'Delete Selected Entries', id='delete-btn', n_clicks=0
-                        ),
-                        html.Br(),
-                        html.Br(),
-                        html.Button('Refresh Table', id='refresh-btn', n_clicks=0),
-                        html.Hr(),
-                    ],
-                ),
-                dcc.Tab(
                     label='View & Edit Files',
                     children=[
                         html.H2('Select and Edit Existing Files'),
+                        html.Label('Select a Bucket here:'),
+                        bucket_dropdown(layout_id='bucket-selector'),
                         html.Label('Select a Folder:'),
                         dcc.Dropdown(
                             id='folder-selector',
@@ -164,6 +180,30 @@ layout = html.Div(
                             'Update File Metadata & Location', id='update-file-btn'
                         ),
                         html.Div(id='update-status'),
+                    ],
+                ),
+                dcc.Tab(
+                    label='Database entries',
+                    children=[
+                        html.H3('Database Entries'),
+                        html.Div(id='database-entries-list'),
+                        html.Label('Enter file paths to Delete (comma-separated):'),
+                        html.Br(),
+                        html.Br(),
+                        dcc.Input(
+                            id='delete-paths-input',
+                            type='text',
+                            placeholder='Enter file paths to delete',
+                        ),
+                        html.Br(),
+                        html.Br(),
+                        html.Button(
+                            'Delete Selected Entries', id='delete-btn', n_clicks=0
+                        ),
+                        html.Br(),
+                        html.Br(),
+                        html.Button('Refresh Table', id='refresh-btn', n_clicks=0),
+                        html.Hr(),
                     ],
                 ),
             ]
@@ -251,23 +291,17 @@ def get_collection():
         return None
 
 
-# Initialize boto3 S3 client
-s3_client = boto3.client(
-    's3',
-    aws_access_key_id=settings.aws_access_key_id,
-    aws_secret_access_key=settings.aws_secret_access_key,
-    region_name=AWS_REGION,
-)
-
-
-def list_s3_folders() -> List[str]:
+def list_s3_folders(bucket_name) -> List[str]:
     """
     List top-level folders in the S3 bucket.
 
     :return: List of folder names (strings), including empty string for root
     """
+    if not bucket_name:
+        logger.warning('No bucket name provided to list_s3_folders')
+        return []
     try:
-        response = s3_client.list_objects_v2(Bucket=S3_BUCKET_NAME, Delimiter='/')
+        response = s3_client.list_objects_v2(Bucket=bucket_name, Delimiter='/')
         prefixes = response.get('CommonPrefixes', [])
         folders = [p['Prefix'].rstrip('/') for p in prefixes]
         return [''] + folders  # Include root folder as empty string
@@ -277,7 +311,10 @@ def list_s3_folders() -> List[str]:
 
 
 def save_file(
-    decoded_content: bytes, filename: str, folder_name: Optional[str] = None
+    bucket_name,
+    decoded_content: bytes,
+    filename: str,
+    folder_name: Optional[str] = None,
 ) -> str:
     """
     Save a file to S3 with an optional folder prefix.
@@ -293,8 +330,8 @@ def save_file(
     else:
         key = filename
 
-    s3_client.put_object(Bucket=S3_BUCKET_NAME, Key=key, Body=decoded_content)
-    s3_url = generate_s3_url(S3_BUCKET_NAME, key, AWS_REGION)
+    s3_client.put_object(Bucket=bucket_name, Key=key, Body=decoded_content)
+    s3_url = generate_s3_url(bucket_name, key, AWS_REGION)
     return s3_url
 
 
@@ -317,20 +354,20 @@ def store_file_metadata(file_path: str, tags: List[str]) -> None:
     collection.insert_one(file_entry)
 
 
-def delete_file_from_s3(filename: str) -> None:
+def delete_file_from_s3(bucket_name, filename: str) -> None:
     """
     Delete a file from S3.
 
     :param filename: Object key (path + filename) in S3
     """
     try:
-        s3_client.delete_object(Bucket=S3_BUCKET_NAME, Key=filename)
+        s3_client.delete_object(Bucket=bucket_name, Key=filename)
         logger.info(f'Deleted {filename} from S3.')
     except Exception as e:
         logger.error(f'Error deleting {filename} from S3: {e}')
 
 
-def delete_entries_by_path(paths_to_delete: List[str]) -> None:
+def delete_entries_by_path(bucket_name, paths_to_delete: List[str]) -> None:
     """
     Delete files from S3 and remove their metadata from MongoDB.
 
@@ -346,7 +383,7 @@ def delete_entries_by_path(paths_to_delete: List[str]) -> None:
             # Extract S3 key from URL
             parts = file_path.split('/')
             filename = '/'.join(parts[3:])  # bucket + region parts removed
-            delete_file_from_s3(filename)
+            delete_file_from_s3(bucket_name, filename)
         else:
             logger.warning(f'Invalid file path for deletion: {file_path}')
 
@@ -378,6 +415,7 @@ def fetch_all_files() -> List[dict]:
     State('folder-dropdown', 'value'),
     State('new-folder-name', 'value'),
     State('file-tags', 'value'),
+    State('bucket-selector', 'value'),
 )
 def upload_files(
     file_contents: Optional[List[str]],
@@ -385,6 +423,7 @@ def upload_files(
     selected_folder: Optional[str],
     new_folder_name: Optional[str],
     file_tags: Optional[str],
+    bucket_name: str,
 ) -> tuple[str, str, html.Ul]:
     """
     Upload files to S3 bucket, optionally into a folder.
@@ -413,7 +452,7 @@ def upload_files(
         try:
             content_type, content_string = content.split(',')
             decoded = base64.b64decode(content_string)
-            file_url = save_file(decoded, filename, folder_name)
+            file_url = save_file(bucket_name, decoded, filename, folder_name)
             store_file_metadata(file_url, tags_list)
             uploaded_filenames.append(filename)
             logger.info(f"Uploaded {filename} to folder {folder_name or '(root)'}")
@@ -437,10 +476,14 @@ def upload_files(
     Input('refresh-btn', 'n_clicks'),
     Input('delete-btn', 'n_clicks'),
     State('delete-paths-input', 'value'),
+    State('bucket-selector', 'value'),
     prevent_initial_call=True,
 )
 def update_database_entries(
-    refresh_clicks: int, delete_clicks: int, delete_paths: Optional[str]
+    refresh_clicks: int,
+    delete_clicks: int,
+    delete_paths: Optional[str],
+    bucket_name: str,
 ) -> Union[html.Table, html.Div]:
     """
     Update the displayed database entries table.
@@ -460,7 +503,7 @@ def update_database_entries(
         paths_to_delete = [p.strip() for p in delete_paths.split(',') if p.strip()]
         if not paths_to_delete:
             return html.Div('No valid paths provided for deletion.')
-        delete_entries_by_path(paths_to_delete)
+        delete_entries_by_path(bucket_name, paths_to_delete)
         logger.info(f'Deleted entries for paths: {paths_to_delete}')
 
     files = fetch_all_files()
@@ -487,17 +530,24 @@ def update_database_entries(
 @callback(
     Output('file-selector', 'options'),
     Input('folder-selector', 'value'),
+    Input('bucket-selector', 'value'),
 )
-def update_file_selector_options(folder_name: Optional[str]) -> List[dict]:
+def update_file_selector_options(
+    folder_name: Optional[str], bucket_name: str
+) -> List[dict]:
     """
     Update the file dropdown options based on the selected folder.
 
     :param folder_name: Selected folder name or empty string for root
     :return: List of options dicts for dcc.Dropdown
     """
+
+    if not bucket_name:
+        return []
+
     prefix = f'{folder_name.strip()}/' if folder_name else ''
     try:
-        response = s3_client.list_objects_v2(Bucket=S3_BUCKET_NAME, Prefix=prefix)
+        response = s3_client.list_objects_v2(Bucket=bucket_name, Prefix=prefix)
         files = response.get('Contents', [])
         file_keys = [obj['Key'] for obj in files if not obj['Key'].endswith('/')]
         options = [{'label': key[len(prefix) :], 'value': key} for key in file_keys]
@@ -516,7 +566,7 @@ def is_pdf(file_key: str) -> bool:
 
 
 def is_audio(file_key: str) -> bool:
-    return file_key.lower().endswith(('.mp3', '.wav', '.ogg'))
+    return file_key.lower().endswith(('.mp3', '.wav', '.ogg', 'm4a'))
 
 
 def is_raw_text(file_key: str) -> bool:
@@ -531,38 +581,40 @@ def is_raw_text(file_key: str) -> bool:
     Output('edit-folder-dropdown', 'value'),
     Output('edit-new-folder', 'value'),
     Input('file-selector', 'value'),
+    State('bucket-selector', 'value'),
 )
 def display_selected_file(
     file_key: Optional[str],
+    bucket_name: str,
 ) -> tuple[html.Div, str, Optional[str], str]:
     if not file_key:
         return html.Div('No file selected.'), '', None, ''
 
-    file_url = generate_presigned_url(S3_BUCKET_NAME, file_key)
+    file_url = generate_presigned_url(bucket_name, file_key)
 
     logging.info(f'Generated url: {file_url}')
 
     # Determine file type and render appropriately
     if is_image(file_key):
-        display_component = html.Img(src=file_url, style={'maxWidth': '100%'})
+        main_component = html.Img(src=file_url, style={'maxWidth': '100%'})
     elif is_pdf(file_key):
-        display_component = html.Iframe(
+        main_component = html.Iframe(
             src=file_url, style={'width': '100%', 'height': '600px'}
         )
     elif is_audio(file_key):
-        display_component = html.Audio(src=file_url, controls=True)
+        main_component = html.Audio(src=file_url, controls=True)
 
     elif is_raw_text(file_key):
         # Download file content using presigned URL or S3 client
         try:
-            response = s3_client.get_object(Bucket=S3_BUCKET_NAME, Key=file_key)
+            response = s3_client.get_object(Bucket=bucket_name, Key=file_key)
             text = response['Body'].read().decode('utf-8')
-            display_component = html.Pre(text, style={'whiteSpace': 'pre-wrap'})
+            main_component = html.Pre(text, style={'whiteSpace': 'pre-wrap'})
         except Exception as e:
             logger.error(f'Error reading text file {file_key}: {e}')
-            display_component = html.Div('Could not read file contents.')
+            main_component = html.Div('Could not read file contents.')
     else:
-        display_component = html.A('Download file', href=file_url, target='_blank')
+        main_component = html.Div('Preview not available.')
 
     # Fetch tags from database
     collection = get_collection()
@@ -570,8 +622,17 @@ def display_selected_file(
     tags = ', '.join(metadata.get('tags', [])) if metadata else ''
 
     folder_name = '/'.join(file_key.split('/')[:-1]) if '/' in file_key else ''
+    # Always add a download link
+    download_link = html.A(
+        '⬇ Download file',
+        href=file_url,
+        target='_blank',
+        style={'display': 'block', 'marginTop': '10px'},
+    )
 
-    return html.Div([display_component]), tags, folder_name or None, ''
+    display_component = html.Div([main_component, download_link])
+
+    return display_component, tags, folder_name or None, ''
 
 
 @callback(
@@ -581,6 +642,7 @@ def display_selected_file(
     State('edit-tags', 'value'),
     State('edit-folder-dropdown', 'value'),
     State('edit-new-folder', 'value'),
+    State('bucket-selector', 'value'),
     prevent_initial_call=True,
 )
 def update_file_metadata(
@@ -589,6 +651,7 @@ def update_file_metadata(
     new_tags: Optional[str],
     selected_folder: Optional[str],
     new_folder_name: Optional[str],
+    bucket_name: str,
 ) -> str:
     """
     Update file tags and optionally move the file to a new folder.
@@ -626,12 +689,12 @@ def update_file_metadata(
         try:
             # Copy old object to new key
             s3_client.copy_object(
-                Bucket=S3_BUCKET_NAME,
-                CopySource={'Bucket': S3_BUCKET_NAME, 'Key': old_key},
+                Bucket=bucket_name,
+                CopySource={'Bucket': bucket_name, 'Key': old_key},
                 Key=new_key,
             )
             # Delete old object
-            s3_client.delete_object(Bucket=S3_BUCKET_NAME, Key=old_key)
+            s3_client.delete_object(Bucket=bucket_name, Key=old_key)
             logger.info(f'Moved file from {old_key} to {new_key}')
         except Exception as e:
             logger.error(f'Error moving file in S3: {e}')
@@ -639,11 +702,11 @@ def update_file_metadata(
     else:
         new_key = old_key
 
-    new_file_url = generate_s3_url(S3_BUCKET_NAME, new_key, AWS_REGION)
+    new_file_url = generate_s3_url(bucket_name, new_key, AWS_REGION)
 
     # Update DB entry
     update_result = collection.update_one(
-        {'file_path': generate_s3_url(S3_BUCKET_NAME, old_key, AWS_REGION)},
+        {'file_path': generate_s3_url(bucket_name, old_key, AWS_REGION)},
         {
             '$set': {
                 'file_path': new_file_url,
@@ -665,8 +728,44 @@ def update_file_metadata(
     Output('edit-folder-dropdown', 'options'),
     Input('upload-files', 'contents'),
     Input('upload-button', 'n_clicks'),
+    Input('bucket-selector', 'value'),
+    Input('upload-bucket-selector', 'value'),
 )
-def refresh_folder_options(upload_contents, update_clicks):
-    folders = list_s3_folders()
-    options = [{'label': f or '(root)', 'value': f} for f in folders]
-    return options, options, options
+def refresh_folder_options(
+    upload_contents, update_clicks, edit_bucket: str, upload_bucket
+):
+    edit_folders = list_s3_folders(edit_bucket)
+    upload_folders = list_s3_folders(upload_bucket)
+    options_edit = [{'label': f or '(root)', 'value': f} for f in edit_folders]
+    options_upload = [{'label': f or '(root)', 'value': f} for f in upload_folders]
+    return options_upload, options_edit, options_edit
+
+
+@callback(
+    Output('upload-bucket-selector', 'options'),
+    Output('upload-bucket-selector', 'value'),
+    Input('url', 'pathname'),  # Trigger when page is loaded
+)
+def populate_upload_bucket_dropdown(pathname):
+    """Populate bucket dropdown dynamically based on user session."""
+    if 'user' not in session:
+        raise PreventUpdate
+    buckets = session.get('ALLOWED_BUCKETS', {'splitbox-bucket': 'us-east-1'})
+    default = session.get('DEFAULT_BUCKET', list(buckets.keys())[0])
+    options = [{'label': b, 'value': b} for b in buckets.keys()]
+    return options, default
+
+
+@callback(
+    Output('bucket-selector', 'options'),
+    Output('bucket-selector', 'value'),
+    Input('url', 'pathname'),  # Trigger when page is loaded
+)
+def populate_bucket_dropdown(pathname):
+    """Populate bucket dropdown dynamically based on user session."""
+    if 'user' not in session:
+        raise PreventUpdate
+    buckets = session.get('ALLOWED_BUCKETS', {'splitbox-bucket': 'us-east-1'})
+    default = session.get('DEFAULT_BUCKET', list(buckets.keys())[0])
+    options = [{'label': b, 'value': b} for b in buckets.keys()]
+    return options, default

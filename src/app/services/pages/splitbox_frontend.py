@@ -4,14 +4,8 @@ from flask import session
 
 from config.settings import settings  # Adjust import if your settings are elsewhere
 
-image_tag = getattr(settings, 'image_tag', 'unknown')
-if image_tag.startswith('v'):  # or some other way to detect a tag
-    commit_link = f'https://gitlab.com/pgalmiche/dashlab/-/tags/{image_tag}'
-else:
-    commit_link = f'https://gitlab.com/pgalmiche/dashlab/-/commit/{image_tag}'
-
-
-dash.register_page(__name__, path='/', name='Home', order=0)
+if settings.env != 'testing':
+    dash.register_page(__name__, path='/splitbox', name='SplitBox', order=2)
 
 layout = html.Div(
     children=[
@@ -19,31 +13,17 @@ layout = html.Div(
         html.Div(
             className='container py-5',
             children=[
-                html.H1('Welcome to DashLab 👋', className='fw-bold mb-3'),
+                html.H1('Welcome to SplitBox 👋', className='fw-bold mb-3'),
                 html.P(
-                    'DashLab is a personal space for experimenting with data science tools, models, '
-                    'and visualizations using Plotly Dash.',
+                    'SplitBox aims at working on beatbox sound files!',
                     className='lead',
                 ),
                 html.P(
                     [
-                        'Explore interactive datasets, statistical summaries, and machine learning demos — all from one place.',
-                        html.Br(),
-                        html.Br(),
-                        '👤 Visit my ',
-                        html.A(
-                            'personal portfolio',
-                            href='https://pierregalmiche.link/about',
-                            target='_blank',
-                            className='text-primary',
-                        ),
-                        ' to learn more about who I am and what I’m working on.',
-                        html.Br(),
-                        html.Br(),
                         '📘 Full project documentation is available on the ',
                         html.A(
-                            'GitLab Page',
-                            href='https://pgalmiche.gitlab.io/dashlab/',
+                            'GitLab Page of Mickael Bestard',
+                            href='https://mickael.bestard.gitlab.io/splitbox/',
                             target='_blank',
                             className='text-primary',
                         ),
@@ -52,14 +32,14 @@ layout = html.Div(
                         '🧑‍💻 You can also explore the codebase and CI/CD pipelines on ',
                         html.A(
                             'GitLab',
-                            href='https://gitlab.com/pgalmiche/dashlab',
+                            href='https://gitlab.com/mickael.bestard/splitbox',
                             target='_blank',
                             className='text-primary',
                         ),
                         '.',
                         html.Br(),
                         html.Br(),
-                        "🛠️ To explore how I built this project and learn more about its dependencies, don't hesitate to visit my wiki: ",
+                        "🛠️ To explore how we worked with Mickael on this project and learn more about its dependencies, don't hesitate to visit my wiki: ",
                         html.A(
                             'MindShelf',
                             href='https://wiki.pierregalmiche.link',
@@ -84,43 +64,8 @@ layout = html.Div(
                     ),
                     className='text-muted',
                 ),
-                html.H2('Available Sections', className='h4 mt-4 mb-3'),
-                html.Ul(
-                    [
-                        html.Li(
-                            html.A(
-                                '📁 S3 File Explorer',
-                                href='/file-explorer',
-                                className='link-primary',
-                            ),
-                        ),
-                        html.Li(
-                            html.A(
-                                'SplitBox',
-                                href='/splitbox',
-                                className='link-primary',
-                            ),
-                        ),
-                    ],
-                    className='mb-4',
-                ),
-                html.P(
-                    [
-                        'Current image version: ',
-                        html.Code(image_tag),
-                        ' — corresponds to commit ',
-                        html.A(
-                            image_tag,
-                            href=commit_link,
-                            target='_blank',
-                            className='text-primary',
-                        ),
-                        ' on GitLab project.',
-                    ],
-                    className='mt-3',
-                ),
                 html.Div(
-                    id='auth-banner', className='mb-4'
+                    id='splitbox-auth-banner', className='mb-4'
                 ),  # Dynamic auth banner here
             ],
         ),
@@ -128,14 +73,16 @@ layout = html.Div(
 )
 
 
-@dash.callback(Output('auth-banner', 'children'), Input('url', 'pathname'))
+@dash.callback(Output('splitbox-auth-banner', 'children'), Input('url', 'pathname'))
 def update_auth_banner(_):
     try:
         if 'user' in session:
 
             user = session['user']
             approved = user.get('custom:approved', 'false').lower()
-            if approved != 'true':
+            splitbox_user = user.get('custom:splitbox-access', 'false').lower()
+
+            if approved != 'true' and splitbox_user != 'true':
                 # Pending approval banner + logout button
                 return html.Div(
                     [
@@ -155,16 +102,16 @@ def update_auth_banner(_):
                         ),
                     ]
                 )
-            else:
-                # Approved user - show logout button + welcome message
+            elif splitbox_user != 'true':
+                # Pending approval banner + logout button
                 return html.Div(
                     [
                         html.Div(
-                            className='alert alert-success',
+                            className='alert alert-warning',
                             children=[
-                                '✅ You are logged in.',
+                                '⏳ You are logged in and approved, but not a splitbox member!',
                                 html.Br(),
-                                'Have fun exploring the available projects!',
+                                'Please ask for membership wait until an admin changes that.',
                             ],
                         ),
                         html.A(
@@ -175,6 +122,27 @@ def update_auth_banner(_):
                         ),
                     ]
                 )
+            else:
+                # Approved user - show logout button + welcome message
+                return html.Div(
+                    [
+                        html.Div(
+                            className='alert alert-success',
+                            children=[
+                                '✅ You are logged in and a member of SplitBox!',
+                                html.Br(),
+                                'Enjoy the app, Beatboxer!',
+                            ],
+                        ),
+                        html.A(
+                            'Logout',
+                            href='/logout',
+                            className='btn btn-danger',
+                            role='button',
+                        ),
+                    ]
+                )
+
     except RuntimeError:
         # Happens when session not accessible
         pass
