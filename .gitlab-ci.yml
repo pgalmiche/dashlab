@@ -6,7 +6,7 @@ services:
 variables:
   DOCKER_HOST: tcp://docker:2375/
   DOCKER_TLS_CERTDIR: ""
-  IMAGE_TAG: ${CI_COMMIT_TAG:-$CI_COMMIT_SHORT_SHA}
+  IMAGE_TAG: $CI_COMMIT_SHORT_SHA
   EC2_USER: ubuntu
   EC2_SSH_KEY: /tmp/deploy_key.pem
   UV_VERSION: 0.8.4
