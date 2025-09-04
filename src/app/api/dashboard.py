@@ -189,6 +189,7 @@ app = Dash(
     __name__,
     pages_folder='../services/pages',
     use_pages=True,
+    suppress_callback_exceptions=True,
     external_stylesheets=external_css,
     external_scripts=[
         'https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js'

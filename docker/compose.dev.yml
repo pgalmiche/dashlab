@@ -18,6 +18,21 @@ services:
     env_file:
       - "../.env"
 
+  splitbox-api-prod:
+    container_name: splitbox-api-container
+    image: pgalmiche0/splitbox-api-prod:latest
+    environment:
+      - PYTHONPATH=/usr/src/app/src
+    ports:
+      - 8888:8888
+    networks:
+      - dashlab_network
+    command: >
+      gunicorn -k uvicorn.workers.UvicornWorker splitbox_api:app
+      -b 0.0.0.0:8888 --workers 2
+    env_file:
+      - "../.env"
+
   dashlab-prod:
     container_name: dashlab-prod-container
     build:

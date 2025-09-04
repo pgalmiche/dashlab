@@ -1,11 +1,35 @@
+import logging
+from typing import Optional
+
+import boto3
 import dash
-from dash import Input, Output, dcc, html
+import requests
+from dash import callback, dcc, html
+from dash.dependencies import Input, Output, State
 from flask import session
 
-from config.settings import settings  # Adjust import if your settings are elsewhere
+from app.services.utils.file_utils import (
+    list_files_in_s3,
+    list_s3_folders,
+    render_file_preview,
+)
+from config.logging import setup_logging
+from config.settings import settings
+
+setup_logging()
+logger = logging.getLogger(__name__)
 
 if settings.env != 'testing':
     dash.register_page(__name__, path='/splitbox', name='SplitBox', order=2)
+
+AWS_REGION = 'us-east-1'
+# Initialize boto3 S3 client
+s3_client = boto3.client(
+    's3',
+    aws_access_key_id=settings.aws_access_key_id,
+    aws_secret_access_key=settings.aws_secret_access_key,
+    region_name=AWS_REGION,
+)
 
 layout = html.Div(
     children=[
@@ -134,6 +158,50 @@ def update_auth_banner(_):
                                 'Enjoy the app, Beatboxer!',
                             ],
                         ),
+                        html.Div(
+                            children=[
+                                html.Label('Select a splitbox folder:'),
+                                dcc.Dropdown(
+                                    id='splitbox-folder-selector',
+                                    options=[],
+                                    placeholder='Select a folder',
+                                    clearable=True,
+                                    style={'width': '300px'},
+                                ),
+                                html.Br(),
+                                html.Label('Select an audio file to work on:'),
+                                dcc.Dropdown(
+                                    id='splitbox-file-selector',
+                                    placeholder='Select a file',
+                                    style={'width': '600px'},
+                                    clearable=True,
+                                ),
+                                html.Br(),
+                                html.Label(
+                                    '📂 File Preview:', style={'fontWeight': 'bold'}
+                                ),
+                                html.Div(id='splitbox-file-display'),
+                                html.Br(),
+                                html.Label(
+                                    'Click on the button to run the track splitter on the selected file:',
+                                    style={'fontWeight': 'bold'},
+                                ),
+                                html.Br(),
+                                html.Button(
+                                    'Launch SplitBox',
+                                    id='run-splitbox-btn',
+                                    n_clicks=0,
+                                    style={'marginTop': '10px'},
+                                ),
+                                html.Br(),
+                                dcc.Loading(
+                                    id='loading-splitbox',
+                                    type='circle',  # "circle", "dot", or "default"
+                                    children=html.Div(id='splitbox-results'),
+                                ),
+                                html.Br(),
+                            ],
+                        ),
                         html.A(
                             'Logout',
                             href='/logout',
@@ -158,3 +226,102 @@ def update_auth_banner(_):
             ),
         ]
     )
+
+
+@callback(
+    Output('splitbox-folder-selector', 'options'),
+    Input('url', 'pathname'),  # trigger when page loads
+)
+def refresh_splitbox_folder_options(_):
+    """
+    Refresh the folder options for the splitbox bucket.
+    The bucket is fixed, so we ignore the input value.
+    """
+    # List folders in the fixed bucket
+    folders = list_s3_folders(s3_client, 'splitbox-bucket')
+
+    # Convert to Dropdown options
+    options = [{'label': f or '(root)', 'value': f} for f in folders]
+
+    return options
+
+
+@callback(
+    Output('splitbox-file-selector', 'options'),
+    Input('splitbox-folder-selector', 'value'),
+)
+def update_file_selector_options(folder_name: Optional[str]):
+    return list_files_in_s3(s3_client, 'splitbox-bucket', folder_name)
+
+
+@callback(
+    Output('splitbox-file-display', 'children'),
+    Input('splitbox-file-selector', 'value'),
+)
+def display_selected_file(file_key: Optional[str]):
+    if not file_key:
+        return html.Div('No file selected.'), '', None, ''
+
+    display_component, _, _, _ = render_file_preview(
+        s3_client, 'splitbox-bucket', file_key
+    )
+    return display_component
+
+
+def render_audio_players(audio_urls: list[str]) -> html.Div:
+    """Render one audio player per URL with labels + download links."""
+    if not audio_urls:
+        return html.Div('No audio files found.')
+
+    players = []
+    for url in audio_urls:
+        filename = url.split('/')[-1]  # extract file name from URL
+        players.append(
+            html.Div(
+                [
+                    html.Label(filename, style={'fontWeight': 'bold'}),
+                    html.Audio(
+                        src=url,
+                        controls=True,
+                        style={'marginBottom': '5px', 'display': 'block'},
+                    ),
+                    html.A(
+                        '⬇ Download',
+                        href=url,
+                        target='_blank',
+                        style={'marginBottom': '15px', 'display': 'block'},
+                    ),
+                ],
+                style={'marginBottom': '20px'},
+            )
+        )
+    return html.Div(players)
+
+
+@callback(
+    Output('splitbox-results', 'children'),
+    Output('run-splitbox-btn', 'disabled'),
+    Input('run-splitbox-btn', 'n_clicks'),
+    State('splitbox-file-selector', 'value'),
+    prevent_initial_call=True,
+)
+def run_splitbox(n_clicks, file_key):
+    if not file_key or n_clicks <= 0:
+        return html.Div('Please select a file and click Run.'), False
+
+    try:
+        # Disable button immediately
+        url = 'http://splitbox-api-prod:8888/split_sources'
+        params = {'path': f's3://splitbox-bucket/{file_key}'}
+
+        resp = requests.get(url, params=params, timeout=60)
+        if resp.status_code != 200:
+            return html.Div(f'Error {resp.status_code}: {resp.text}'), False
+
+        data = resp.json()
+        audio_urls = data.get('outputs', [])
+
+        return render_audio_players(audio_urls), False  # re-enable after done
+
+    except Exception as e:
+        return html.Div(f'⚠️ Error running SplitBox: {str(e)}'), False
