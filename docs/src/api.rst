@@ -11,3 +11,4 @@ This section contains the full API reference for all core modules, classes, and 
    app.api.dashboard
    config.logging
    config.settings
+   app.services.utils.file_utils
