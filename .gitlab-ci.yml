@@ -85,34 +85,38 @@ deploy-to-ec2:
   only:
     - main
   before_script:
-    - apk add --no-cache curl python3 py3-pip bash openssh-client
+    - apk add --no-cache curl python3 py3-pip bash openssh-client rsync
     - pip install awscli
   script:
     - echo "$SSH_PRIVATE_KEY_B64" | base64 -d > $EC2_SSH_KEY
     - chmod 400 $EC2_SSH_KEY
+
+    # Copy latest compose.prod.yml from repo to server
+    - rsync -avz -e "ssh -o StrictHostKeyChecking=no -i $EC2_SSH_KEY" ./docker/compose.prod.yml $EC2_USER@$EC2_HOST:/home/ubuntu/compose.prod.yml
 
     - |
       ssh -o StrictHostKeyChecking=no -i $EC2_SSH_KEY $EC2_USER@$EC2_HOST << EOF
         export IMAGE="$ECR_REGISTRY/$ECR_REPOSITORY:$CI_COMMIT_SHORT_SHA"
         export AWS_DEFAULT_REGION=$AWS_DEFAULT_REGION
 
+        # Authenticate with ECR
         aws ecr get-login-password | docker login --username AWS --password-stdin $ECR_REGISTRY
 
-        echo "Pulling image \$IMAGE"
-        docker pull \$IMAGE
+        # Get all services except caddy
+        SERVICES=$(docker compose -f /home/ubuntu/compose.prod.yml config --services | grep -v '^caddy$')
+
+        echo "Pulling latest images for: $SERVICES"
+        docker compose -f /home/ubuntu/compose.prod.yml pull $SERVICES
 
         echo "Updating IMAGE_TAG in .env..."
         sed -i 's/^IMAGE_TAG=.*/IMAGE_TAG=$CI_COMMIT_SHORT_SHA/' /home/ubuntu/.env
 
-        cd /home/ubuntu
-
-        echo "Restarting dashlab-prod container"
-        docker compose -f "compose.prod.yml" up -d --no-deps dashlab-prod
+        echo "Restarting services: $SERVICES"
+        docker compose -f /home/ubuntu/compose.prod.yml up -d $SERVICES
 
         echo "Cleaning up unused Docker images and containers"
         docker system prune -af
       EOF
-
   dependencies:
     - build-dashlab-prod
 

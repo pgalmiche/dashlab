@@ -2,11 +2,30 @@ services:
   dashlab-prod:
     image: 376129839585.dkr.ecr.eu-west-3.amazonaws.com/dashlab:${IMAGE_TAG}
     env_file: ".env"
+    environment:
+      - PYTHONPATH=/usr/src/app/src
+      - DASH_ENV="production"
+      - DASH_DEBUG=False
     ports:
       - "7777:7777"
     restart: always
     networks:
       - dashnet
+
+  splitbox-api-prod:
+    container_name: splitbox-api-container
+    image: pgalmiche0/splitbox-api-prod:latest
+    environment:
+      - PYTHONPATH=/usr/src/app/src
+    ports:
+      - 8888:8888
+    networks:
+      - dashnet
+    command: >
+      gunicorn -k uvicorn.workers.UvicornWorker splitbox_api:app
+      -b 0.0.0.0:8888 --workers 2
+    env_file:
+      - "../.env"
 
   mongo:
     image: mongo:latest # Official MongoDB image

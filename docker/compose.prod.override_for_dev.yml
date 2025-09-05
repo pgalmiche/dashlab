@@ -1,0 +1,9 @@
+services:
+  dashlab-prod:
+    env_file: "../.env"
+
+  splitbox-api-prod:
+    env_file: "../.env"
+
+  mongo:
+    env_file: "../.env"
