@@ -1,5 +1,6 @@
 import logging
 from typing import Optional
+from urllib.parse import urlparse
 
 import boto3
 import dash
@@ -269,12 +270,19 @@ def display_selected_file(file_key: Optional[str]):
 
 
 def render_audio_players_with_download(audio_urls):
-    """Return a Div with audio players and download links."""
-    return html.Div(
-        [
+    audio_divs = []
+    for i, url in enumerate(audio_urls):
+        parsed = urlparse(url)
+        # Remove leading slash
+        path_parts = parsed.path.lstrip('/').split('/')
+
+        # Display the full key path
+        display_path = '/' + '/'.join(path_parts)
+
+        audio_divs.append(
             html.Div(
                 [
-                    html.Label(f"Track {i+1}: {url.split('/')[-1]}"),
+                    html.Label(f'Track {i+1}: {display_path}'),
                     html.Audio(src=url, controls=True, style={'width': '100%'}),
                     html.Br(),
                     html.A(
@@ -284,11 +292,16 @@ def render_audio_players_with_download(audio_urls):
                         style={'marginTop': '5px', 'display': 'inline-block'},
                     ),
                 ],
-                style={'marginBottom': '15px'},
+                style={
+                    'marginBottom': '15px',
+                    'padding': '5px',
+                    'border': '1px solid #ddd',
+                    'borderRadius': '5px',
+                },
             )
-            for i, url in enumerate(audio_urls)
-        ]
-    )
+        )
+
+    return html.Div(audio_divs, style={'maxWidth': '600px', 'margin': '0 auto'})
 
 
 @callback(

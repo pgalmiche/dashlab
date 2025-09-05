@@ -264,7 +264,7 @@ def render_file_preview(
     collection = get_collection()
     metadata = (
         collection.find_one({'file_path': {'$regex': f'{file_key}$'}})
-        if collection
+        if collection is not None
         else None
     )
 

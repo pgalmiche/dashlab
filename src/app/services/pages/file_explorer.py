@@ -10,6 +10,7 @@ from flask import session
 
 from app.services.utils.file_utils import (
     build_database_table,
+    delete_file_from_s3,
     fetch_all_files,
     handle_deletion,
     list_files_in_s3,
@@ -152,6 +153,10 @@ layout = html.Div(
                         ),
                         html.Br(),
                         html.Div(id='file-display'),
+                        html.Br(),
+                        html.Button('Delete file from S3.', id='delete-file-btn'),
+                        html.Br(),
+                        html.Div(id='delete-file-status'),
                         html.Br(),
                         html.Label('Edit Tags (comma-separated):'),
                         dcc.Input(
@@ -371,3 +376,23 @@ def populate_bucket_dropdown(pathname):
     default = session.get('DEFAULT_BUCKET', list(buckets.keys())[0])
     options = [{'label': b, 'value': b} for b in buckets.keys()]
     return options, default
+
+
+@callback(
+    Output('delete-file-status', 'children'),
+    Input('delete-file-btn', 'n_clicks'),
+    State('file-selector', 'value'),  # for example, the S3 key stored here
+    State('bucket-selector', 'value'),  # for example, the S3 key stored here
+    prevent_initial_call=True,
+)
+def delete_file(n_clicks, file_key, bucket):
+    if not file_key:
+        return html.Span('No file selected to delete.', style={'color': 'red'})
+
+    try:
+        delete_file_from_s3(s3_client, bucket, file_key)
+        return html.Span(f'✅ Deleted {file_key} from S3.', style={'color': 'green'})
+    except Exception as e:
+        return html.Span(
+            f'❌ Error deleting {file_key}: {str(e)}', style={'color': 'red'}
+        )
