@@ -268,34 +268,27 @@ def display_selected_file(file_key: Optional[str]):
     return display_component
 
 
-def render_audio_players(audio_urls: list[str]) -> html.Div:
-    """Render one audio player per URL with labels + download links."""
-    if not audio_urls:
-        return html.Div('No audio files found.')
-
-    players = []
-    for url in audio_urls:
-        filename = url.split('/')[-1]  # extract file name from URL
-        players.append(
+def render_audio_players_with_download(audio_urls):
+    """Return a Div with audio players and download links."""
+    return html.Div(
+        [
             html.Div(
                 [
-                    html.Label(filename, style={'fontWeight': 'bold'}),
-                    html.Audio(
-                        src=url,
-                        controls=True,
-                        style={'marginBottom': '5px', 'display': 'block'},
-                    ),
+                    html.Label(f"Track {i+1}: {url.split('/')[-1]}"),
+                    html.Audio(src=url, controls=True, style={'width': '100%'}),
+                    html.Br(),
                     html.A(
                         '⬇ Download',
                         href=url,
                         target='_blank',
-                        style={'marginBottom': '15px', 'display': 'block'},
+                        style={'marginTop': '5px', 'display': 'inline-block'},
                     ),
                 ],
-                style={'marginBottom': '20px'},
+                style={'marginBottom': '15px'},
             )
-        )
-    return html.Div(players)
+            for i, url in enumerate(audio_urls)
+        ]
+    )
 
 
 @callback(
@@ -310,18 +303,22 @@ def run_splitbox(n_clicks, file_key):
         return html.Div('Please select a file and click Run.'), False
 
     try:
-        # Disable button immediately
+        # Disable button while processing
         url = 'http://splitbox-api-prod:8888/split_sources'
         params = {'path': f's3://splitbox-bucket/{file_key}'}
 
-        resp = requests.get(url, params=params, timeout=60)
+        resp = requests.get(url, params=params, timeout=300)
         if resp.status_code != 200:
-            return html.Div(f'Error {resp.status_code}: {resp.text}'), False
+            return html.Div(f'❌ Error {resp.status_code}: {resp.text}'), False
 
         data = resp.json()
-        audio_urls = data.get('outputs', [])
+        audio_urls = data.get('files', [])
+        if not audio_urls:
+            return html.Div('⚠️ No output files returned.'), False
 
-        return render_audio_players(audio_urls), False  # re-enable after done
+        # Render audio players
+        results_component = render_audio_players_with_download(audio_urls)
+        return results_component, False  # re-enable button
 
     except Exception as e:
         return html.Div(f'⚠️ Error running SplitBox: {str(e)}'), False

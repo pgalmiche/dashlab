@@ -241,12 +241,22 @@ def render_file_preview(
     else:
         main_component = html.Div('Preview not available.')
 
-    # Fetch tags from database
+    # Fetch tags and folder from database
     collection = get_collection()
-    metadata = collection.find_one({'file_path': {'$regex': f'{file_key}$'}})
+    metadata = (
+        collection.find_one({'file_path': {'$regex': f'{file_key}$'}})
+        if collection
+        else None
+    )
+
     tags = ', '.join(metadata.get('tags', [])) if metadata else ''
 
-    folder_name = '/'.join(file_key.split('/')[:-1]) if '/' in file_key else ''
+    # Use folder from metadata if available, otherwise fallback to key-derived folder
+    folder_name = (
+        metadata.get('folder')
+        if metadata and 'folder' in metadata
+        else ('/'.join(file_key.split('/')[:-1]) if '/' in file_key else '')
+    )
 
     # Add a download link
     download_link = html.A(
