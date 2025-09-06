@@ -102,17 +102,23 @@ deploy-to-ec2:
         # Authenticate with ECR
         aws ecr get-login-password | docker login --username AWS --password-stdin $ECR_REGISTRY
 
-        # Get all services except caddy
-        SERVICES=$(docker compose -f /home/ubuntu/compose.prod.yml config --services | grep -v '^caddy$')
+        cd /home/ubuntu
 
-        echo "Pulling latest images for: $SERVICES"
-        docker compose -f /home/ubuntu/compose.prod.yml pull $SERVICES
+        # Get all services except caddy (evaluated on EC2)
+        SERVICES=\$(docker compose -f compose.prod.yml config --services | grep -v '^caddy$')
+
+        echo "Pulling latest images for: \$SERVICES"
+        docker compose -f compose.prod.yml pull \$SERVICES
 
         echo "Updating IMAGE_TAG in .env..."
-        sed -i 's/^IMAGE_TAG=.*/IMAGE_TAG=$CI_COMMIT_SHORT_SHA/' /home/ubuntu/.env
+        if grep -q '^IMAGE_TAG=' .env; then
+          sed -i 's/^IMAGE_TAG=.*/IMAGE_TAG=$CI_COMMIT_SHORT_SHA/' .env
+        else
+          echo "IMAGE_TAG=$CI_COMMIT_SHORT_SHA" >> .env
+        fi
 
-        echo "Restarting services: $SERVICES"
-        docker compose -f /home/ubuntu/compose.prod.yml up -d $SERVICES
+        echo "Restarting services: \$SERVICES"
+        docker compose -f compose.prod.yml up -d \$SERVICES
 
         echo "Cleaning up unused Docker images and containers"
         docker system prune -af
