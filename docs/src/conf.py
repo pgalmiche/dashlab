@@ -21,6 +21,7 @@ rst_prolog = f"""
 """
 
 sys.path.insert(0, abspath('../../src/'))
+sys.path.insert(0, abspath('.'))
 
 # -- Project information -----------------------------------------------------
 
