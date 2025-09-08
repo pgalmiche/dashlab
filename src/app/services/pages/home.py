@@ -1,4 +1,5 @@
 import dash
+import dash_bootstrap_components as dbc
 from dash import Input, Output, dcc, html
 from flask import session
 
@@ -84,25 +85,69 @@ layout = html.Div(
                     ),
                     className='text-muted',
                 ),
-                html.H2('Available Sections', className='h4 mt-4 mb-3'),
-                html.Ul(
+                html.Div(
                     [
-                        html.Li(
-                            html.A(
-                                '📁 S3 File Explorer',
-                                href='/file-explorer',
-                                className='link-primary',
-                            ),
+                        html.H2('Available Projects', className='h4 mt-4 mb-3'),
+                        dbc.Row(
+                            [
+                                dbc.Col(
+                                    dbc.Card(
+                                        [
+                                            dbc.CardBody(
+                                                [
+                                                    html.H5(
+                                                        '📁 S3 File Explorer',
+                                                        className='card-title',
+                                                    ),
+                                                    html.P(
+                                                        'Browse, upload, and manage files in S3 buckets.',
+                                                        className='card-text',
+                                                    ),
+                                                    dbc.Button(
+                                                        'Go',
+                                                        href='/file-explorer',
+                                                        color='primary',
+                                                        className='mt-2',
+                                                    ),
+                                                ]
+                                            )
+                                        ],
+                                        className='mb-4 shadow-sm',
+                                        style={'minHeight': '150px'},
+                                    ),
+                                    md=6,
+                                ),
+                                dbc.Col(
+                                    dbc.Card(
+                                        [
+                                            dbc.CardBody(
+                                                [
+                                                    html.H5(
+                                                        '🎵 SplitBox',
+                                                        className='card-title',
+                                                    ),
+                                                    html.P(
+                                                        'Upload audio files and split them automatically.',
+                                                        className='card-text',
+                                                    ),
+                                                    dbc.Button(
+                                                        'Go',
+                                                        href='/splitbox',
+                                                        color='primary',
+                                                        className='mt-2',
+                                                    ),
+                                                ]
+                                            )
+                                        ],
+                                        className='mb-4 shadow-sm',
+                                        style={'minHeight': '150px'},
+                                    ),
+                                    md=6,
+                                ),
+                            ],
+                            className='g-4',
                         ),
-                        html.Li(
-                            html.A(
-                                'SplitBox',
-                                href='/splitbox',
-                                className='link-primary',
-                            ),
-                        ),
-                    ],
-                    className='mb-4',
+                    ]
                 ),
                 html.P(
                     [

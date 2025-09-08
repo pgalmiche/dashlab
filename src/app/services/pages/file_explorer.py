@@ -1,4 +1,5 @@
 import logging
+from time import time
 from typing import List, Optional, Union
 
 import boto3
@@ -81,55 +82,6 @@ layout = html.Div(
         dcc.Tabs(
             [
                 dcc.Tab(
-                    label='Upload Files',
-                    children=[
-                        html.H2('Upload Files'),
-                        html.Label('Select the S3 bucket you want to use:'),
-                        bucket_dropdown(layout_id='upload-bucket-selector'),
-                        html.Br(),
-                        html.Label('Select an existing folder:'),
-                        dcc.Dropdown(
-                            id='folder-dropdown',
-                            options=[],
-                            placeholder='Select a folder (optional)',
-                            clearable=True,
-                            style={'width': '300px'},
-                        ),
-                        html.Br(),
-                        html.Label('Or Create a new one:'),
-                        html.Br(),
-                        dcc.Input(
-                            id='new-folder-name',
-                            type='text',
-                            placeholder='Enter new folder name (optional)',
-                            style={'width': '300px'},
-                        ),
-                        html.Br(),
-                        html.Br(),
-                        html.Label('You also can add tags to your file:'),
-                        html.Br(),
-                        dcc.Input(
-                            id='file-tags',
-                            type='text',
-                            placeholder='Enter tags (comma-separated)',
-                            style={'width': '400px'},
-                        ),
-                        html.Br(),
-                        html.Br(),
-                        dcc.Upload(
-                            id='upload-files',
-                            children=html.Button('Upload File', id='upload-button'),
-                            multiple=True,
-                        ),
-                        html.Br(),
-                        html.Div(id='upload-status'),
-                        html.Div(id='tags-status'),
-                        html.Div(id='uploaded-files-list'),
-                        html.Br(),
-                        html.Br(),
-                    ],
-                ),
-                dcc.Tab(
                     label='View & Edit Files',
                     children=[
                         html.H2('Select and Edit Existing Files'),
@@ -186,6 +138,56 @@ layout = html.Div(
                             'Update File Metadata & Location', id='update-file-btn'
                         ),
                         html.Div(id='update-status'),
+                    ],
+                ),
+                dcc.Tab(
+                    label='Upload Files',
+                    children=[
+                        dcc.Store(id='page-load-trigger', data=True),
+                        html.H2('Upload Files'),
+                        html.Label('Select the S3 bucket you want to use:'),
+                        bucket_dropdown(layout_id='upload-bucket-selector'),
+                        html.Br(),
+                        html.Label('Select an existing folder:'),
+                        dcc.Dropdown(
+                            id='folder-dropdown',
+                            options=[],
+                            placeholder='Select a folder (optional)',
+                            clearable=True,
+                            style={'width': '300px'},
+                        ),
+                        html.Br(),
+                        html.Label('Or Create a new one:'),
+                        html.Br(),
+                        dcc.Input(
+                            id='new-folder-name',
+                            type='text',
+                            placeholder='Enter new folder name (optional)',
+                            style={'width': '300px'},
+                        ),
+                        html.Br(),
+                        html.Br(),
+                        html.Label('You also can add tags to your file:'),
+                        html.Br(),
+                        dcc.Input(
+                            id='file-tags',
+                            type='text',
+                            placeholder='Enter tags (comma-separated)',
+                            style={'width': '400px'},
+                        ),
+                        html.Br(),
+                        html.Br(),
+                        dcc.Upload(
+                            id='upload-files',
+                            children=html.Button('Upload File', id='upload-button'),
+                            multiple=True,
+                        ),
+                        html.Br(),
+                        html.Div(id='upload-status'),
+                        html.Div(id='tags-status'),
+                        html.Div(id='uploaded-files-list'),
+                        html.Br(),
+                        html.Br(),
                     ],
                 ),
                 dcc.Tab(
@@ -351,48 +353,72 @@ def refresh_folder_options(
 @callback(
     Output('upload-bucket-selector', 'options'),
     Output('upload-bucket-selector', 'value'),
-    Input('url', 'pathname'),  # Trigger when page is loaded
+    Input('page-load-trigger', 'data'),
 )
 def populate_upload_bucket_dropdown(pathname):
     """Populate bucket dropdown dynamically based on user session."""
     if 'user' not in session:
         raise PreventUpdate
+
     buckets = session.get('ALLOWED_BUCKETS', {'splitbox-bucket': 'us-east-1'})
-    default = session.get('DEFAULT_BUCKET', list(buckets.keys())[0])
+    default = session.get('DEFAULT_BUCKET')
+
     options = [{'label': b, 'value': b} for b in buckets.keys()]
+
+    # Pick first bucket if default is not set or invalid
+    if not default or default not in buckets:
+        default = list(buckets.keys())[0] if buckets else None
+
+    # Ensure a value is always returned
     return options, default
 
 
 @callback(
     Output('bucket-selector', 'options'),
     Output('bucket-selector', 'value'),
-    Input('url', 'pathname'),  # Trigger when page is loaded
+    Input('page-load-trigger', 'data'),
 )
 def populate_bucket_dropdown(pathname):
-    """Populate bucket dropdown dynamically based on user session."""
     if 'user' not in session:
         raise PreventUpdate
+
     buckets = session.get('ALLOWED_BUCKETS', {'splitbox-bucket': 'us-east-1'})
-    default = session.get('DEFAULT_BUCKET', list(buckets.keys())[0])
+    default = session.get('DEFAULT_BUCKET')
+
     options = [{'label': b, 'value': b} for b in buckets.keys()]
+
+    # Pick first bucket if default is missing
+    if not default or default not in buckets:
+        default = list(buckets.keys())[0] if buckets else None
+
     return options, default
 
 
 @callback(
     Output('delete-file-status', 'children'),
+    Output('page-load-trigger', 'data'),
     Input('delete-file-btn', 'n_clicks'),
-    State('file-selector', 'value'),  # for example, the S3 key stored here
-    State('bucket-selector', 'value'),  # for example, the S3 key stored here
+    State('file-selector', 'value'),
+    State('bucket-selector', 'value'),
     prevent_initial_call=True,
 )
 def delete_file(n_clicks, file_key, bucket):
     if not file_key:
-        return html.Span('No file selected to delete.', style={'color': 'red'})
+        return (
+            html.Span('No file selected to delete.', style={'color': 'red'}),
+            dash.no_update,
+        )
 
     try:
         delete_file_from_s3(s3_client, bucket, file_key)
-        return html.Span(f'✅ Deleted {file_key} from S3.', style={'color': 'green'})
+        return (
+            html.Span(f'✅ Deleted {file_key} from S3.', style={'color': 'green'}),
+            time(),  # triggers callbacks dependent on page-load-trigger
+        )
     except Exception as e:
-        return html.Span(
-            f'❌ Error deleting {file_key}: {str(e)}', style={'color': 'red'}
+        return (
+            html.Span(
+                f'❌ Error deleting {file_key}: {str(e)}', style={'color': 'red'}
+            ),
+            dash.no_update,
         )

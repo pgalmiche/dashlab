@@ -4,8 +4,9 @@ from urllib.parse import urlparse
 
 import boto3
 import dash
+import dash_bootstrap_components as dbc
 import requests
-from dash import callback, dcc, html
+from dash import callback, callback_context, dcc, html
 from dash.dependencies import Input, Output, State
 from flask import session
 
@@ -13,6 +14,7 @@ from app.services.utils.file_utils import (
     list_files_in_s3,
     list_s3_folders,
     render_file_preview,
+    upload_files_to_s3,
 )
 from config.logging import setup_logging
 from config.settings import settings
@@ -31,6 +33,14 @@ s3_client = boto3.client(
     aws_secret_access_key=settings.aws_secret_access_key,
     region_name=AWS_REGION,
 )
+card_style = {
+    'backgroundColor': '#e9f5ff',  # custom light blue
+    'color': '#333333',  # text color
+    'borderRadius': '12px',
+    'boxShadow': '0 4px 12px rgba(0, 0, 0, 0.08)',
+    'padding': '20px',
+    'marginBottom': '20px',
+}
 
 layout = html.Div(
     children=[
@@ -40,7 +50,7 @@ layout = html.Div(
             children=[
                 html.H1('Welcome to SplitBox 👋', className='fw-bold mb-3'),
                 html.P(
-                    'SplitBox aims at working on beatbox sound files!',
+                    'SplitBox aims at working on beatbox sound files, and split them into track for music production.',
                     className='lead',
                 ),
                 html.P(
@@ -161,46 +171,166 @@ def update_auth_banner(_):
                         ),
                         html.Div(
                             children=[
-                                html.Label('Select a splitbox folder:'),
-                                dcc.Dropdown(
-                                    id='splitbox-folder-selector',
-                                    options=[],
-                                    placeholder='Select a folder',
-                                    clearable=True,
-                                    style={'width': '300px'},
+                                dbc.Card(
+                                    dbc.CardBody(
+                                        [
+                                            html.H2(
+                                                'Select a file to work on:',
+                                                className='fw-bold mb-3',
+                                            ),
+                                            html.Hr(),
+                                            html.Div(
+                                                style={
+                                                    'display': 'flex',
+                                                    'gap': '40px',
+                                                    'alignItems': 'flex-start',
+                                                },
+                                                children=[
+                                                    # Left column: Folder choice + tags + upload button
+                                                    html.Div(
+                                                        style={
+                                                            'flex': '1',
+                                                            'display': 'flex',
+                                                            'flexDirection': 'column',
+                                                            'gap': '10px',
+                                                        },
+                                                        children=[
+                                                            # Existing folder selection or new folder
+                                                            html.H3(
+                                                                'Upload from your device:',
+                                                                className='fw-bold mb-3',
+                                                            ),
+                                                            html.Label(
+                                                                'Select folder to save or create a new one:'
+                                                            ),
+                                                            dcc.Dropdown(
+                                                                id='splitbox-save-folder-selector',
+                                                                options=[],  # will be filled dynamically
+                                                                placeholder='Select folder',
+                                                                clearable=True,
+                                                                style={
+                                                                    'width': '300px'
+                                                                },
+                                                            ),
+                                                            dcc.Input(
+                                                                id='splitbox-new-folder-name',
+                                                                type='text',
+                                                                placeholder='Or enter new folder name',
+                                                                style={
+                                                                    'width': '300px'
+                                                                },
+                                                            ),
+                                                            # Tags input
+                                                            html.Label(
+                                                                'Add tags for the file (comma separated):'
+                                                            ),
+                                                            dcc.Input(
+                                                                id='splitbox-file-tags',
+                                                                type='text',
+                                                                placeholder='tag1, tag2, ...',
+                                                                style={
+                                                                    'width': '300px'
+                                                                },
+                                                            ),
+                                                            # Upload button below folder and tags
+                                                            dcc.Upload(
+                                                                id='splitbox-upload-file',
+                                                                children=html.Button(
+                                                                    'Upload your beatbox file here',
+                                                                    id='upload-button',
+                                                                ),
+                                                                multiple=False,
+                                                            ),
+                                                            html.Div(
+                                                                id='splitbox-upload-status'
+                                                            ),
+                                                        ],
+                                                    ),
+                                                    # Right column: Folder selector + file selector (for processing)
+                                                    html.Div(
+                                                        style={
+                                                            'flex': '2',
+                                                            'display': 'flex',
+                                                            'flexDirection': 'column',
+                                                            'gap': '10px',
+                                                        },
+                                                        children=[
+                                                            html.H3(
+                                                                'Or load a saved file:',
+                                                                className='fw-bold mb-3',
+                                                            ),
+                                                            html.Label(
+                                                                'Select a splitbox folder:'
+                                                            ),
+                                                            dcc.Dropdown(
+                                                                id='splitbox-folder-selector',
+                                                                options=[],
+                                                                placeholder='Select a folder',
+                                                                clearable=True,
+                                                                style={
+                                                                    'width': '300px'
+                                                                },
+                                                            ),
+                                                            html.Label(
+                                                                'Select an audio file to work on:'
+                                                            ),
+                                                            dcc.Dropdown(
+                                                                id='splitbox-file-selector',
+                                                                placeholder='Select a file',
+                                                                style={
+                                                                    'width': '600px'
+                                                                },
+                                                                clearable=True,
+                                                            ),
+                                                        ],
+                                                    ),
+                                                ],
+                                            ),
+                                            html.Br(),
+                                            html.Label(
+                                                '📂 File Preview:',
+                                                style={'fontWeight': 'bold'},
+                                            ),
+                                            html.Div(id='splitbox-file-display'),
+                                            html.Br(),
+                                        ]
+                                    ),
+                                    className='mb-3',
+                                    style=card_style,
                                 ),
-                                html.Br(),
-                                html.Label('Select an audio file to work on:'),
-                                dcc.Dropdown(
-                                    id='splitbox-file-selector',
-                                    placeholder='Select a file',
-                                    style={'width': '600px'},
-                                    clearable=True,
+                                dbc.Card(
+                                    dbc.CardBody(
+                                        [
+                                            html.H2(
+                                                'Process the file with splitbox and observe the outputs:',
+                                                className='fw-bold mb-3',
+                                            ),
+                                            html.Hr(),
+                                            html.Label(
+                                                'Click on the button to run the track splitter on the selected file:',
+                                                style={'fontWeight': 'bold'},
+                                            ),
+                                            html.Br(),
+                                            html.Button(
+                                                'Split your track',
+                                                id='run-splitbox-btn',
+                                                n_clicks=0,
+                                                style={'marginTop': '10px'},
+                                            ),
+                                            html.Br(),
+                                            dcc.Loading(
+                                                id='loading-splitbox',
+                                                type='circle',  # "circle", "dot", or "default"
+                                                children=html.Div(
+                                                    id='splitbox-results'
+                                                ),
+                                            ),
+                                            html.Br(),
+                                        ]
+                                    ),
+                                    className='mb-3',
+                                    style=card_style,
                                 ),
-                                html.Br(),
-                                html.Label(
-                                    '📂 File Preview:', style={'fontWeight': 'bold'}
-                                ),
-                                html.Div(id='splitbox-file-display'),
-                                html.Br(),
-                                html.Label(
-                                    'Click on the button to run the track splitter on the selected file:',
-                                    style={'fontWeight': 'bold'},
-                                ),
-                                html.Br(),
-                                html.Button(
-                                    'Launch SplitBox',
-                                    id='run-splitbox-btn',
-                                    n_clicks=0,
-                                    style={'marginTop': '10px'},
-                                ),
-                                html.Br(),
-                                dcc.Loading(
-                                    id='loading-splitbox',
-                                    type='circle',  # "circle", "dot", or "default"
-                                    children=html.Div(id='splitbox-results'),
-                                ),
-                                html.Br(),
                             ],
                         ),
                         html.A(
@@ -227,32 +357,6 @@ def update_auth_banner(_):
             ),
         ]
     )
-
-
-@callback(
-    Output('splitbox-folder-selector', 'options'),
-    Input('url', 'pathname'),  # trigger when page loads
-)
-def refresh_splitbox_folder_options(_):
-    """
-    Refresh the folder options for the splitbox bucket.
-    The bucket is fixed, so we ignore the input value.
-    """
-    # List folders in the fixed bucket
-    folders = list_s3_folders(s3_client, 'splitbox-bucket')
-
-    # Convert to Dropdown options
-    options = [{'label': f or '(root)', 'value': f} for f in folders]
-
-    return options
-
-
-@callback(
-    Output('splitbox-file-selector', 'options'),
-    Input('splitbox-folder-selector', 'value'),
-)
-def update_file_selector_options(folder_name: Optional[str]):
-    return list_files_in_s3(s3_client, 'splitbox-bucket', folder_name)
 
 
 @callback(
@@ -335,3 +439,122 @@ def run_splitbox(n_clicks, file_key):
 
     except Exception as e:
         return html.Div(f'⚠️ Error running SplitBox: {str(e)}'), False
+
+
+@callback(
+    Output('splitbox-upload-status', 'children'),
+    Output('splitbox-save-folder-selector', 'options'),
+    Output('splitbox-save-folder-selector', 'value'),
+    Output('splitbox-folder-selector', 'options'),
+    Output('splitbox-folder-selector', 'value'),
+    Output('splitbox-file-selector', 'options'),
+    Output('splitbox-file-selector', 'value'),
+    Input('splitbox-upload-file', 'contents'),
+    Input('splitbox-folder-selector', 'value'),  # folder change
+    Input('url', 'pathname'),  # page load trigger
+    State('splitbox-upload-file', 'filename'),
+    State('splitbox-save-folder-selector', 'value'),
+    State('splitbox-new-folder-name', 'value'),
+    State('splitbox-file-tags', 'value'),
+)
+def splitbox_main_callback(
+    file_content,
+    folder_trigger_value,
+    pathname,
+    filename,
+    selected_save_folder,
+    new_folder_name,
+    file_tags,
+):
+    triggered_id = callback_context.triggered[0]['prop_id'].split('.')[0]
+    bucket_name = 'splitbox-bucket'
+    status_msg = ''
+
+    # --- Populate folder options for both save & select dropdowns ---
+    folders = list_s3_folders(s3_client, bucket_name)
+    # Map root folder to empty string
+    folder_options = [{'label': f or '(root)', 'value': f or ''} for f in folders]
+
+    # Default selections
+    folder_value = (
+        folder_trigger_value
+        if folder_trigger_value is not None
+        else (folder_options[0]['value'] if folder_options else '')
+    )
+    save_folder_value = (
+        selected_save_folder
+        if selected_save_folder is not None
+        else (folder_options[0]['value'] if folder_options else '')
+    )
+
+    # --- Populate file dropdown for selected folder ---
+    file_options = []
+    file_value = None
+    if folder_value is not None:
+        file_options = list_files_in_s3(s3_client, bucket_name, folder_value)
+        file_value = file_options[0]['value'] if file_options else None
+
+    # --- Handle upload ---
+    if triggered_id == 'splitbox-upload-file' and file_content and filename:
+        # Determine the folder to save (allow root folder "")
+        folder_name = (
+            new_folder_name.strip() if new_folder_name else selected_save_folder
+        )
+        if folder_name is None:
+            folder_name = ''  # root folder
+
+        tags_list = (
+            [tag.strip() for tag in file_tags.split(',') if tag.strip()]
+            if file_tags
+            else []
+        )
+
+        try:
+            # Upload the file (pass content as-is if your helper handles decoding)
+            _, _, uploaded_files = upload_files_to_s3(
+                s3_client,
+                bucket_name,
+                [file_content],
+                [filename],
+                folder_name,
+                tags_list,
+            )
+        except Exception as e:
+            return (
+                f'Error uploading file: {e}',
+                folder_options,
+                save_folder_value,
+                folder_options,
+                folder_value,
+                file_options,
+                file_value,
+            )
+
+        status_msg = (
+            f"File '{filename}' uploaded successfully to '{folder_name or '(root)'}'"
+        )
+
+        # Update folder dropdowns
+        if folder_name not in [o['value'] for o in folder_options]:
+            folder_options.append(
+                {'label': folder_name or '(root)', 'value': folder_name}
+            )
+        folder_value = folder_name
+        save_folder_value = folder_name
+
+        # Refresh file dropdown with all files in that folder
+        file_options = list_files_in_s3(s3_client, bucket_name, folder_name)
+        # Automatically select the newly uploaded file
+        file_value = next(
+            (f['value'] for f in file_options if f['label'] == filename), None
+        )
+
+    return (
+        status_msg,
+        folder_options,
+        save_folder_value,
+        folder_options,
+        folder_value,
+        file_options,
+        file_value,
+    )
