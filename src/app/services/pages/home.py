@@ -1,9 +1,9 @@
 import dash
-import dash_bootstrap_components as dbc
 from dash import Input, Output, dcc, html
 from flask import session
 
-from config.settings import settings  # Adjust import if your settings are elsewhere
+from app.services.utils.ui_utils import build_project_section
+from config.settings import settings
 
 image_tag = getattr(settings, 'image_tag', 'unknown')
 if image_tag.startswith('v'):  # or some other way to detect a tag
@@ -30,6 +30,21 @@ layout = html.Div(
                     [
                         'Explore interactive datasets, statistical summaries, and machine learning demos — all from one place.',
                         html.Br(),
+                        html.P(
+                            [
+                                'Current image version: ',
+                                html.Code(image_tag),
+                                ' — corresponds to commit ',
+                                html.A(
+                                    image_tag,
+                                    href=commit_link,
+                                    target='_blank',
+                                    className='text-primary',
+                                ),
+                                ' on GitLab project.',
+                            ],
+                            className='mt-3',
+                        ),
                         html.Br(),
                         '👤 Visit my ',
                         html.A(
@@ -86,85 +101,6 @@ layout = html.Div(
                     className='text-muted',
                 ),
                 html.Div(
-                    [
-                        html.H2('Available Projects', className='h4 mt-4 mb-3'),
-                        dbc.Row(
-                            [
-                                dbc.Col(
-                                    dbc.Card(
-                                        [
-                                            dbc.CardBody(
-                                                [
-                                                    html.H5(
-                                                        '📁 S3 File Explorer',
-                                                        className='card-title',
-                                                    ),
-                                                    html.P(
-                                                        'Browse, upload, and manage files in S3 buckets.',
-                                                        className='card-text',
-                                                    ),
-                                                    dbc.Button(
-                                                        'Go',
-                                                        href='/file-explorer',
-                                                        color='primary',
-                                                        className='mt-2',
-                                                    ),
-                                                ]
-                                            )
-                                        ],
-                                        className='mb-4 shadow-sm',
-                                        style={'minHeight': '150px'},
-                                    ),
-                                    md=6,
-                                ),
-                                dbc.Col(
-                                    dbc.Card(
-                                        [
-                                            dbc.CardBody(
-                                                [
-                                                    html.H5(
-                                                        '🎵 SplitBox',
-                                                        className='card-title',
-                                                    ),
-                                                    html.P(
-                                                        'Upload audio files and split them automatically.',
-                                                        className='card-text',
-                                                    ),
-                                                    dbc.Button(
-                                                        'Go',
-                                                        href='/splitbox',
-                                                        color='primary',
-                                                        className='mt-2',
-                                                    ),
-                                                ]
-                                            )
-                                        ],
-                                        className='mb-4 shadow-sm',
-                                        style={'minHeight': '150px'},
-                                    ),
-                                    md=6,
-                                ),
-                            ],
-                            className='g-4',
-                        ),
-                    ]
-                ),
-                html.P(
-                    [
-                        'Current image version: ',
-                        html.Code(image_tag),
-                        ' — corresponds to commit ',
-                        html.A(
-                            image_tag,
-                            href=commit_link,
-                            target='_blank',
-                            className='text-primary',
-                        ),
-                        ' on GitLab project.',
-                    ],
-                    className='mt-3',
-                ),
-                html.Div(
                     id='auth-banner', className='mb-4'
                 ),  # Dynamic auth banner here
             ],
@@ -175,6 +111,7 @@ layout = html.Div(
 
 @dash.callback(Output('auth-banner', 'children'), Input('url', 'pathname'))
 def update_auth_banner(_):
+    user = session.get('user', None)
     try:
         if 'user' in session:
 
@@ -192,6 +129,8 @@ def update_auth_banner(_):
                                 'Please wait until an admin activates your account.',
                             ],
                         ),
+                        html.H2('Available Projects', className='h4 mt-4 mb-3'),
+                        build_project_section(user),
                         html.A(
                             'Logout',
                             href='/logout',
@@ -212,6 +151,8 @@ def update_auth_banner(_):
                                 'Have fun exploring the available projects!',
                             ],
                         ),
+                        html.H2('Available Projects', className='h4 mt-4 mb-3'),
+                        build_project_section(user),
                         html.A(
                             'Logout',
                             href='/logout',
@@ -227,6 +168,8 @@ def update_auth_banner(_):
     # Not logged in: show login/signup buttons
     return html.Div(
         [
+            html.H2('Available Projects', className='h4 mt-4 mb-3'),
+            build_project_section(user),
             html.A(
                 'Login',
                 href='/login',

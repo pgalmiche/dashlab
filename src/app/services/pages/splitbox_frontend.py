@@ -11,6 +11,7 @@ from dash.dependencies import Input, Output, State
 from flask import session
 
 from app.services.utils.file_utils import (
+    card_style,
     list_files_in_s3,
     list_s3_folders,
     render_file_preview,
@@ -33,14 +34,6 @@ s3_client = boto3.client(
     aws_secret_access_key=settings.aws_secret_access_key,
     region_name=AWS_REGION,
 )
-card_style = {
-    'backgroundColor': '#e9f5ff',  # custom light blue
-    'color': '#333333',  # text color
-    'borderRadius': '12px',
-    'boxShadow': '0 4px 12px rgba(0, 0, 0, 0.08)',
-    'padding': '20px',
-    'marginBottom': '20px',
-}
 
 layout = html.Div(
     children=[
@@ -108,7 +101,7 @@ layout = html.Div(
 )
 
 
-@dash.callback(Output('splitbox-auth-banner', 'children'), Input('url', 'pathname'))
+@callback(Output('splitbox-auth-banner', 'children'), Input('url', 'pathname'))
 def update_auth_banner(_):
     try:
         if 'user' in session:
@@ -354,6 +347,12 @@ def update_auth_banner(_):
                 href='/login',
                 className='btn btn-primary me-2',
                 role='button',
+            ),
+            dbc.Button(
+                '🏠 Back to Home',
+                href='/',  # your home page path
+                color='primary',
+                className='me-2',
             ),
         ]
     )

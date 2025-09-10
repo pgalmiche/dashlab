@@ -41,6 +41,15 @@ MONGO_URI = (
     f'{settings.mongo_initdb_database}?authSource=admin'
 )
 
+card_style = {
+    'backgroundColor': '#e9f5ff',  # custom light blue
+    'color': '#333333',  # text color
+    'borderRadius': '12px',
+    'boxShadow': '0 4px 12px rgba(0, 0, 0, 0.08)',
+    'padding': '20px',
+    'marginBottom': '20px',
+}
+
 
 def list_s3_folders(s3_client, bucket_name) -> List[str]:
     """

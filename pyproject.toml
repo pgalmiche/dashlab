@@ -19,7 +19,9 @@ dependencies = [
   "requests-oauthlib",
   "PyJWT",
   "pydantic",
-  "pydantic-settings"
+  "pydantic-settings",
+  "beautifulsoup4",
+  "requests",
 ]
 
 [project.optional-dependencies]
