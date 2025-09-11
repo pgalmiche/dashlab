@@ -28,7 +28,7 @@ def test_get_user_allowed_buckets_with_session():
 def test_get_user_allowed_buckets_default():
     session.clear()
     result = fe.get_user_allowed_buckets()
-    assert 'splitbox-bucket' in result
+    assert 'dashlab-bucket' in result
 
 
 def test_bucket_dropdown_builds_component():
@@ -43,7 +43,7 @@ def test_upload_files_callback_success(monkeypatch):
         fe, 'upload_files_to_s3', lambda *a, **k: ('ok', 'tags', ['f1'])
     )
     status, tags, ul = fe.upload_files_callback(
-        ['content'], ['f1'], None, None, None, 'bucket'
+        ['content'], ['f1'], None, None, None, 'bucket', 'new_file_name'
     )
     assert 'ok' in status
     assert 'tags' in tags
@@ -52,7 +52,9 @@ def test_upload_files_callback_success(monkeypatch):
 
 def test_upload_files_callback_no_files_raises():
     with pytest.raises(fe.PreventUpdate):
-        fe.upload_files_callback(None, None, None, None, None, 'bucket')
+        fe.upload_files_callback(
+            None, None, None, None, None, 'bucket', 'new_file_name'
+        )
 
 
 def test_update_database_entries_refresh(monkeypatch):
@@ -104,7 +106,9 @@ def test_display_selected_file_with_file(monkeypatch):
 
 def test_update_file_metadata_callback(monkeypatch):
     monkeypatch.setattr(fe, 'move_file_and_update_metadata', lambda *a, **k: 'done')
-    msg = fe.update_file_metadata_callback(1, 'key', 'tags', 'folder', None, 'bucket')
+    msg = fe.update_file_metadata_callback(
+        1, 'key', 'tags', 'folder', None, 'bucket', 'new_file_name'
+    )
     assert msg == 'done'
 
 
