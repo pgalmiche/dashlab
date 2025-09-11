@@ -1,6 +1,5 @@
 .env
 .env.example
-/docs
 /tests
 /docker
 /scripts

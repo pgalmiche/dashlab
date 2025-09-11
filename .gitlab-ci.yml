@@ -129,11 +129,16 @@ deploy-to-ec2:
 pages:
   stage: deploy-docs
   image: python:3.11-slim
-  script:
-    - apt-get update && apt-get install -y git
+  before_script:
+    - apt-get update && apt-get install -y git curl && rm -rf /var/lib/apt/lists/*
     - python3 -m pip install --upgrade pip
-    - python3 -m pip install sphinx git+https://github.com/bashtage/sphinx-material.git sphinx-tabs myst_parser
+    # Install your docs dependencies using uv
+    - pip install uv
+  script:
+    - uv pip install ".[docs]" --system
+    # Build the docs
     - sphinx-build docs/src/ public/
+
   variables:
     PYTHONPATH: "$CI_PROJECT_DIR/src"
   artifacts:

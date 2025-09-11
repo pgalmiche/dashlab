@@ -72,15 +72,11 @@ services:
     container_name: dashlab-docs
     build:
       context: ".."
-      dockerfile: ./docker/Dockerfile
-      target: dev-env
-    image: dashlab-dev:latest
+      dockerfile: ./docker/docs.Dockerfile
+    image: dashlab-docs
     ports:
       - "8000:8000"
-    volumes:
-      - dashlab_code:/usr/src/app/:rw
     user: "${UID:-1000}:${GID:-1000}"
-    command: ["bash", "/usr/src/app/scripts/docs-build-and-serve.sh"]
     environment:
       - PYTHONPATH=/usr/src/app/src
       - IMAGE_TAG="dev_image"
