@@ -1,8 +1,8 @@
 import logging
+import os
 from time import time
 from typing import List, Optional, Union
 
-import boto3
 import dash
 import dash_bootstrap_components as dbc
 from dash import callback, callback_context, dcc, html
@@ -19,8 +19,10 @@ from app.services.utils.file_utils import (
     list_s3_folders,
     move_file_and_update_metadata,
     render_file_preview,
+    s3_client,
     upload_files_to_s3,
 )
+from app.services.utils.ui_utils import bucket_dropdown
 from config.logging import setup_logging
 from config.settings import settings
 
@@ -36,17 +38,6 @@ if settings.env != 'testing':
     )
 
 
-# AWS S3 Configuration
-AWS_REGION = 'us-east-1'
-
-# Initialize boto3 S3 client
-s3_client = boto3.client(
-    's3',
-    aws_access_key_id=settings.aws_access_key_id,
-    aws_secret_access_key=settings.aws_secret_access_key,
-    region_name=AWS_REGION,
-)
-
 ########################### Functions ##############################
 
 
@@ -55,26 +46,7 @@ def get_user_allowed_buckets():
     if 'ALLOWED_BUCKETS' in session:
         return session['ALLOWED_BUCKETS']
     # fallback
-    return {'splitbox-bucket': 'us-east-1'}
-
-
-def bucket_dropdown(layout_id: str):
-    """Create a dropdown component for buckets."""
-    # Do NOT access session here at import time.
-    # Return a function that will be called when rendering the layout.
-    return html.Div(
-        id=layout_id,
-        children=[
-            dcc.Dropdown(
-                id=layout_id,
-                # Use callback to populate options dynamically
-                options=[],
-                value=None,
-                clearable=False,
-                style={'width': '300px'},
-            )
-        ],
-    )
+    return {'dashlab-bucket': 'us-east-1'}
 
 
 # Page layout definition
@@ -185,6 +157,15 @@ def update_auth_banner(_):
                                         ),
                                         html.Br(),
                                         html.Br(),
+                                        html.Label('Rename the file:'),
+                                        dcc.Input(
+                                            id='edit-new-filename',
+                                            type='text',
+                                            placeholder='Enter new file name',
+                                            style={'width': '300px'},
+                                        ),
+                                        html.Br(),
+                                        html.Br(),
                                         html.Button(
                                             'Update File Metadata & Location',
                                             id='update-file-btn',
@@ -224,6 +205,13 @@ def update_auth_banner(_):
                                         ),
                                         html.Br(),
                                         html.Br(),
+                                        html.Label('You also can rename your files:'),
+                                        dcc.Input(
+                                            id='renamed-filenames',
+                                            type='text',
+                                            placeholder='Enter new names (comma separated)',
+                                            style={'width': '100%'},
+                                        ),
                                         html.Label(
                                             'You also can add tags to your file:'
                                         ),
@@ -326,6 +314,7 @@ def update_auth_banner(_):
     State('new-folder-name', 'value'),
     State('file-tags', 'value'),
     State('bucket-selector', 'value'),
+    State('renamed-filenames', 'value'),
 )
 def upload_files_callback(
     file_contents: Optional[List[str]],
@@ -334,6 +323,7 @@ def upload_files_callback(
     new_folder_name: Optional[str],
     file_tags: Optional[str],
     bucket_name: str,
+    renamed_filenames: Optional[str],
 ) -> tuple[str, str, html.Ul]:
     if not file_contents or not filenames:
         raise PreventUpdate
@@ -344,6 +334,17 @@ def upload_files_callback(
         if file_tags
         else []
     )
+
+    # Handle renaming (preserve extensions)
+    if renamed_filenames:
+        new_names = [
+            name.strip() for name in renamed_filenames.split(',') if name.strip()
+        ]
+        if len(new_names) == len(filenames):
+            filenames = [
+                f'{new}{os.path.splitext(old)[1]}'
+                for old, new in zip(filenames, new_names)
+            ]
 
     status_msg, tags_msg, uploaded_files = upload_files_to_s3(
         s3_client, bucket_name, file_contents, filenames, folder_name, tags_list
@@ -408,6 +409,7 @@ def display_selected_file(file_key: Optional[str], bucket_name: str):
     State('edit-folder-dropdown', 'value'),
     State('edit-new-folder', 'value'),
     State('bucket-selector', 'value'),
+    State('edit-new-filename', 'value'),
     prevent_initial_call=True,
 )
 def update_file_metadata_callback(
@@ -417,10 +419,11 @@ def update_file_metadata_callback(
     selected_folder: Optional[str],
     new_folder_name: Optional[str],
     bucket_name: str,
+    new_filename: Optional[str],
 ) -> str:
     target_folder = new_folder_name or selected_folder
     return move_file_and_update_metadata(
-        s3_client, bucket_name, selected_file_key, new_tags, target_folder
+        s3_client, bucket_name, selected_file_key, new_tags, target_folder, new_filename
     )
 
 
@@ -453,7 +456,7 @@ def populate_upload_bucket_dropdown(pathname):
     if 'user' not in session:
         raise PreventUpdate
 
-    buckets = session.get('ALLOWED_BUCKETS', {'splitbox-bucket': 'us-east-1'})
+    buckets = session.get('ALLOWED_BUCKETS', {'dashlab-bucket': 'us-east-1'})
     default = session.get('DEFAULT_BUCKET')
 
     options = [{'label': b, 'value': b} for b in buckets.keys()]

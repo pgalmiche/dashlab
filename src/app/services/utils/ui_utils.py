@@ -12,15 +12,30 @@ Import from pages to quickly set up working UI for various projects, with displa
 """
 
 import dash_bootstrap_components as dbc
-from dash import html
+from dash import dcc, html
+
+bucket_attribute_map = {
+    'splitbox-bucket': 'custom:splitbox-access',
+    'personnal-files-pg': 'custom:personnal-files-pg',
+    'dashlab-bucket': 'custom:approved',
+    'galmiche-family': 'custom:galmiche-family',
+    'pgvv': 'custom:pgvv',
+}
 
 # Centralized project definitions
 PROJECT_RULES = {
     'slides': {
-        'title': '📑 Slides Gallery',
+        'title': ' 🎞️Slides Gallery',
         'description': 'Browse and interact with generated presentations.',
         'attr': None,  # No restriction
         'href': '/slides-gallery',
+        'requires_auth': False,
+    },
+    'gallery': {
+        'title': '📸 Gallery',
+        'description': 'Browse the various files in the buckets.',
+        'attr': None,  # No restriction
+        'href': '/gallery',
         'requires_auth': False,
     },
     'splitbox': {
@@ -130,4 +145,23 @@ def build_project_section(user):
             ),
             dbc.Row(build_project_cards(user)),
         ]
+    )
+
+
+def bucket_dropdown(layout_id: str):
+    """Create a dropdown component for buckets."""
+    # Do NOT access session here at import time.
+    # Return a function that will be called when rendering the layout.
+    return html.Div(
+        id=layout_id,
+        children=[
+            dcc.Dropdown(
+                id=layout_id,
+                # Use callback to populate options dynamically
+                options=[],
+                value=None,
+                clearable=False,
+                style={'width': '300px'},
+            )
+        ],
     )

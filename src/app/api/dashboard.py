@@ -34,6 +34,7 @@ from flask import Flask, redirect, request, session
 from flask_session import Session
 from requests_oauthlib import OAuth2Session
 
+from app.services.utils.ui_utils import bucket_attribute_map
 from config.logging import setup_logging
 from config.settings import settings
 
@@ -110,11 +111,6 @@ def callback():
     logger.debug(f"session of user: {session['user']}")
 
     def compute_allowed_buckets(user: dict) -> dict:
-        bucket_attribute_map = {
-            'splitbox-bucket': 'custom:splitbox-access',
-            'personnal-files-pg': 'custom:personnal-files-pg',
-            'dashlab-bucket': 'custom:approved',
-        }
         buckets = {
             bucket: 'us-east-1'
             for bucket, attr in bucket_attribute_map.items()

@@ -2,7 +2,6 @@ import logging
 from typing import Optional
 from urllib.parse import urlparse
 
-import boto3
 import dash
 import dash_bootstrap_components as dbc
 import requests
@@ -15,6 +14,7 @@ from app.services.utils.file_utils import (
     list_files_in_s3,
     list_s3_folders,
     render_file_preview,
+    s3_client,
     upload_files_to_s3,
 )
 from config.logging import setup_logging
@@ -26,14 +26,6 @@ logger = logging.getLogger(__name__)
 if settings.env != 'testing':
     dash.register_page(__name__, path='/splitbox', name='SplitBox', order=2)
 
-AWS_REGION = 'us-east-1'
-# Initialize boto3 S3 client
-s3_client = boto3.client(
-    's3',
-    aws_access_key_id=settings.aws_access_key_id,
-    aws_secret_access_key=settings.aws_secret_access_key,
-    region_name=AWS_REGION,
-)
 
 layout = html.Div(
     children=[

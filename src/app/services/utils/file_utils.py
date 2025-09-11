@@ -20,9 +20,11 @@ Import from pages to quickly set up working UI for various projects, with displa
 import base64
 import logging
 import mimetypes
+import os
 from datetime import datetime
 from typing import List, Optional, Union
 
+import boto3
 from botocore.exceptions import BotoCoreError, ClientError
 from dash import html
 from pymongo import MongoClient
@@ -41,6 +43,15 @@ MONGO_URI = (
     f'{settings.mongo_initdb_database}?authSource=admin'
 )
 
+AWS_REGION = 'us-east-1'
+# Initialize boto3 S3 client
+s3_client = boto3.client(
+    's3',
+    aws_access_key_id=settings.aws_access_key_id,
+    aws_secret_access_key=settings.aws_secret_access_key,
+    region_name=AWS_REGION,
+)
+
 card_style = {
     'backgroundColor': '#e9f5ff',  # custom light blue
     'color': '#333333',  # text color
@@ -49,6 +60,21 @@ card_style = {
     'padding': '20px',
     'marginBottom': '20px',
 }
+
+
+def list_all_files(
+    s3_client, bucket_name: str, folder_name: Optional[str] = None
+) -> List[str]:
+    """
+    Return all file keys in a bucket or in a specific folder.
+
+    :param s3_client: boto3 S3 client
+    :param bucket_name: Name of the S3 bucket
+    :param folder_name: Optional folder prefix
+    :return: List of file keys (strings)
+    """
+    files = list_files_in_s3(s3_client, bucket_name, folder_name)
+    return [f['value'] for f in files]  # just return the S3 keys
 
 
 def list_s3_folders(s3_client, bucket_name) -> List[str]:
@@ -254,10 +280,19 @@ def render_file_preview(
         main_component = html.Img(src=file_url, style={'maxWidth': '100%'})
     elif is_pdf(file_key):
         main_component = html.Iframe(
-            src=file_url, style={'width': '100%', 'height': '600px'}
+            src=file_url, style={'width': '100%', 'height': '400px'}
         )
     elif is_audio(file_key):
-        main_component = html.Audio(src=file_url, controls=True)
+        main_component = html.Audio(
+            src=file_url,
+            controls=True,
+            style={
+                'width': '300px',  # adjust width to fit your layout
+                'maxWidth': '100%',  # responsive if container is smaller
+                'display': 'block',  # avoid inline overflow
+                'marginBottom': '10px',
+            },
+        )
     elif is_raw_text(file_key):
         try:
             response = s3_client.get_object(Bucket=bucket_name, Key=file_key)
@@ -279,22 +314,45 @@ def render_file_preview(
 
     tags = ', '.join(metadata.get('tags', [])) if metadata else ''
 
-    # Use folder from metadata if available, otherwise fallback to key-derived folder
     folder_name = (
         metadata.get('folder')
         if metadata and 'folder' in metadata
         else ('/'.join(file_key.split('/')[:-1]) if '/' in file_key else '')
     )
 
-    # Add a download link
     download_link = html.A(
-        '⬇ Download file',
+        html.Button(
+            '⬇',  # just the arrow
+            style={
+                'color': 'green',  # different color for download
+                'background': 'transparent',
+                'border': 'none',
+                'cursor': 'pointer',
+                'fontSize': '20px',
+            },
+            title='Download file',
+        ),
         href=file_url,
         target='_blank',
-        style={'display': 'block', 'marginTop': '10px'},
     )
 
-    display_component = html.Div([main_component, download_link])
+    delete_button = html.Button(
+        '❌',
+        id={'type': 'delete-file-btn', 'file_key': file_key},  # pattern-matching ID
+        n_clicks=0,
+        style={
+            'color': 'red',
+            'background': 'transparent',
+            'border': 'none',
+            'cursor': 'pointer',
+            'fontSize': '20px',
+        },
+        title='Delete this file',
+    )
+
+    actions = html.Div([download_link, delete_button], style={'marginTop': '10px'})
+
+    display_component = html.Div([main_component, actions])
 
     return display_component, tags, folder_name or None, ''
 
@@ -305,6 +363,7 @@ def move_file_and_update_metadata(
     file_key: str,
     new_tags: Optional[str] = None,
     target_folder: Optional[str] = None,
+    new_name: Optional[str] = None,
 ) -> str:
     """
     Move a file to a new folder in S3 (if needed) and update its metadata (tags, path) in MongoDB.
@@ -330,10 +389,14 @@ def move_file_and_update_metadata(
     # Determine new folder path
     folder_path = target_folder.strip() if target_folder else ''
     filename = file_key.split('/')[-1]
+    # If renaming → preserve extension
+    if new_name:
+        _, ext = os.path.splitext(filename)
+        filename = f'{new_name}{ext}'
 
     # Move file if folder changed
     current_folder = '/'.join(file_key.split('/')[:-1])
-    if folder_path and folder_path != current_folder:
+    if folder_path and folder_path != current_folder or new_name:
         new_key = f"{folder_path.rstrip('/')}/{filename}"
         try:
             s3_client.copy_object(
@@ -505,4 +568,86 @@ def build_database_table(files: list[dict]) -> Union[html.Table, html.Div]:
     return html.Table(
         [html.Thead(html.Tr(table_header)), html.Tbody(table_rows)],
         style={'border': '1px solid black', 'borderCollapse': 'collapse'},
+    )
+
+
+def filter_files_by_type(file_keys: List[str], file_type: str) -> List[str]:
+    """
+    Filter S3 file keys by type: 'image', 'pdf', 'audio', 'text'.
+
+    :param file_keys: List of S3 object keys
+    :param file_type: Desired type ("image", "pdf", "audio", "text")
+    :return: List of keys matching the type
+    """
+    type_check = {
+        'image': is_image,
+        'pdf': is_pdf,
+        'audio': is_audio,
+        'text': is_raw_text,
+    }.get(file_type.lower())
+
+    if not type_check:
+        return []
+
+    return [key for key in file_keys if type_check(key)]
+
+
+def build_gallery_layout(s3_client, bucket_name: str, file_keys: list[str]) -> html.Div:
+    """
+    Build a responsive gallery layout for S3 files.
+
+    Each file is displayed in a card with preview, filename, tags, and download link.
+    """
+    gallery_items = []
+
+    for key in file_keys:
+        display_component, tags_str, folder_name, _ = render_file_preview(
+            s3_client, bucket_name, key
+        )
+
+        filename = key.split('/')[-1]
+
+        # Wrap each file in a card
+        item_div = html.Div(
+            [
+                display_component,
+                html.Div(
+                    filename,
+                    style={
+                        'fontWeight': 'bold',
+                        'marginTop': '5px',
+                        'fontSize': '13px',
+                        'overflow': 'hidden',
+                        'textOverflow': 'ellipsis',
+                        'whiteSpace': 'nowrap',
+                        'maxWidth': '200px',
+                        'margin': 'auto',
+                    },
+                    title=filename,  # shows full name on hover
+                ),
+                html.Div(tags_str, style={'fontStyle': 'italic', 'fontSize': '12px'}),
+            ],
+            style={
+                'border': '1px solid #ddd',
+                'borderRadius': '8px',
+                'padding': '10px',
+                'width': '220px',
+                'boxSizing': 'border-box',
+                'textAlign': 'center',
+                'backgroundColor': '#fafafa',
+                'boxShadow': '2px 2px 5px rgba(0,0,0,0.1)',
+            },
+        )
+
+        gallery_items.append(item_div)
+
+    # Flex container for gallery
+    return html.Div(
+        gallery_items,
+        style={
+            'display': 'flex',
+            'flexWrap': 'wrap',
+            'gap': '15px',
+            'justifyContent': 'flex-start',
+        },
     )
