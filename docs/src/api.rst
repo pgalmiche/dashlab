@@ -12,3 +12,4 @@ This section contains the full API reference for all core modules, classes, and 
    config.logging
    config.settings
    app.services.utils.file_utils
+   app.services.utils.ui_utils

@@ -1,3 +1,16 @@
+"""
+This module is used to centralize utilities for the user interface.
+
+Features:
+- Create cards for the projects in PROJECT_RULES with badges showing if user has access or not.
+
+Dependencies:
+- Dash for the html outputs
+
+Usage:
+Import from pages to quickly set up working UI for various projects, with display and management of files.
+"""
+
 import dash_bootstrap_components as dbc
 from dash import html
 
