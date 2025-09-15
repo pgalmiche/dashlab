@@ -18,9 +18,11 @@ Import from pages to quickly set up working UI for various projects, with displa
 """
 
 import base64
+import io
 import logging
 import mimetypes
 import os
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from typing import List, Optional, Union
 
@@ -43,6 +45,25 @@ MONGO_URI = (
     f'{settings.mongo_initdb_database}?authSource=admin'
 )
 
+BUCKET_REGIONS_MAP = {
+    'splitbox-bucket': 'us-east-1',
+    'personnal-files-pg': 'us-east-1',
+    'dashlab-bucket': 'us-east-1',
+    'galmiche-family': 'eu-west-3',
+    'pgvv': 'eu-west-3',
+}
+
+
+def get_s3_client(bucket_name):
+    region = BUCKET_REGIONS_MAP.get(bucket_name, 'us-east-1')
+    return boto3.client(
+        's3',
+        aws_access_key_id=settings.aws_access_key_id,
+        aws_secret_access_key=settings.aws_secret_access_key,
+        region_name=region,
+    )
+
+
 AWS_REGION = 'us-east-1'
 # Initialize boto3 S3 client
 s3_client = boto3.client(
@@ -60,6 +81,45 @@ card_style = {
     'padding': '20px',
     'marginBottom': '20px',
 }
+
+
+def get_current_username(session) -> Optional[str]:
+    user = session.get('user')
+    if not user:
+        return None
+    return user.get('cognito:username') or user.get('username') or user.get('email')
+
+
+def get_allowed_folders_for_user(session, s3_client, bucket_name):
+    """
+    Return all folders the user is allowed to see, including subfolders:
+    - shared/ and all its subfolders
+    - username/inputs, username/outputs and all their subfolders
+    """
+    username = get_current_username(session)
+    existing = list_s3_folders(s3_client, bucket_name)  # all folder prefixes
+
+    allowed = []
+
+    # Shared and all its subfolders
+    shared_folders = [f for f in existing if f.startswith('shared/')]
+    if 'shared/' not in shared_folders:
+        allowed.append('shared/')
+    allowed.extend(shared_folders)
+
+    # User namespace and all its subfolders
+    user_prefix = f'{username}/inputs/'
+    user_folders = [f for f in existing if f.startswith(user_prefix)]
+
+    # Ensure default input/output
+    for default in [f'{username}/inputs/', f'{username}/outputs/']:
+        if default not in user_folders:
+            user_folders.append(default)
+
+    allowed.extend(user_folders)
+
+    # Remove duplicates and sort
+    return sorted(list(set(allowed)))
 
 
 def list_all_files(
@@ -262,18 +322,20 @@ def store_file_metadata(file_path: str, tags: List[str]) -> None:
 
 
 def render_file_preview(
-    s3_client, bucket_name: str, file_key: str
+    s3_client,
+    bucket_name: str,
+    file_key: str,
+    show_download: bool = True,
+    show_delete: bool = False,
 ) -> tuple[html.Div, str, Optional[str], str]:
     """
     Returns the display component, tags, folder name, and default new-folder value
     for a selected file in S3.
 
-    :param bucket_name: S3 bucket name
-    :param file_key: Key of the file in S3
-    :return: tuple(display_component, tags_str, folder_name, new_folder_default)
+    :param show_download: Whether to display the download button
+    :param show_delete: Whether to display the delete button
     """
     file_url = generate_presigned_url(s3_client, bucket_name, file_key)
-    logging.info(f'Generated url: {file_url}')
 
     # Determine file type and render appropriately
     if is_image(file_key):
@@ -287,9 +349,9 @@ def render_file_preview(
             src=file_url,
             controls=True,
             style={
-                'width': '300px',  # adjust width to fit your layout
-                'maxWidth': '100%',  # responsive if container is smaller
-                'display': 'block',  # avoid inline overflow
+                'width': '300px',
+                'maxWidth': '100%',
+                'display': 'block',
                 'marginBottom': '10px',
             },
         )
@@ -311,48 +373,53 @@ def render_file_preview(
         if collection is not None
         else None
     )
-
     tags = ', '.join(metadata.get('tags', [])) if metadata else ''
-
     folder_name = (
         metadata.get('folder')
         if metadata and 'folder' in metadata
         else ('/'.join(file_key.split('/')[:-1]) if '/' in file_key else '')
     )
 
-    download_link = html.A(
-        html.Button(
-            '⬇',  # just the arrow
+    # Conditionally render buttons based on function args
+    actions = []
+    if show_download:
+        download_link = html.A(
+            html.Button(
+                '⬇',
+                style={
+                    'color': 'green',
+                    'background': 'transparent',
+                    'border': 'none',
+                    'cursor': 'pointer',
+                    'fontSize': '20px',
+                },
+                title='Download file',
+            ),
+            href=file_url,
+            target='_blank',
+        )
+        actions.append(download_link)
+
+    if show_delete:
+        delete_button = html.Button(
+            '❌',
+            id={'type': 'delete-file-btn', 'file_key': file_key},
+            n_clicks=0,
             style={
-                'color': 'green',  # different color for download
+                'color': 'red',
                 'background': 'transparent',
                 'border': 'none',
                 'cursor': 'pointer',
                 'fontSize': '20px',
             },
-            title='Download file',
-        ),
-        href=file_url,
-        target='_blank',
+            title='Delete this file',
+        )
+        actions.append(delete_button)
+
+    display_component = html.Div(
+        [main_component] + actions,
+        style={'marginTop': '10px'} if actions else main_component,
     )
-
-    delete_button = html.Button(
-        '❌',
-        id={'type': 'delete-file-btn', 'file_key': file_key},  # pattern-matching ID
-        n_clicks=0,
-        style={
-            'color': 'red',
-            'background': 'transparent',
-            'border': 'none',
-            'cursor': 'pointer',
-            'fontSize': '20px',
-        },
-        title='Delete this file',
-    )
-
-    actions = html.Div([download_link, delete_button], style={'marginTop': '10px'})
-
-    display_component = html.Div([main_component, actions])
 
     return display_component, tags, folder_name or None, ''
 
@@ -485,42 +552,35 @@ def fetch_all_files() -> List[dict]:
 def upload_files_to_s3(
     s3_client,
     bucket_name: str,
-    file_contents: List[str],
-    filenames: List[str],
-    folder_name: Optional[str] = None,
-    tags: Optional[List[str]] = None,
-) -> tuple[str, str, List[str]]:
-    """
-    Upload files to S3 and store metadata in MongoDB.
-
-    :param s3_client: boto3 S3 client
-    :param bucket_name: S3 bucket name
-    :param file_contents: List of base64-encoded file contents
-    :param filenames: List of file names
-    :param folder_name: Optional folder to upload into
-    :param tags: Optional list of tags
-    :return: Tuple of (status_msg, tags_msg, uploaded filenames)
-    """
+    file_contents: list[str],
+    filenames: list[str],
+    folder_name: str = '',
+    tags: list[str] = None,
+):
     uploaded_filenames = []
     tags = tags or []
 
-    for content, filename in zip(file_contents, filenames):
-        try:
-            content_type, content_string = content.split(',')
-            decoded = base64.b64decode(content_string)
-            file_url = save_file(s3_client, bucket_name, decoded, filename, folder_name)
-            store_file_metadata(file_url, tags)
-            uploaded_filenames.append(filename)
-            logger.info(f"Uploaded {filename} to folder {folder_name or '(root)'}")
-        except Exception as e:
-            logger.error(f'Error uploading file {filename}: {e}')
-            return (
-                f'Error uploading {filename}: {e}',
-                '',
-                uploaded_filenames,
-            )
+    def _upload_single_file(content, filename):
+        content_type, content_string = content.split(',')
+        file_bytes = io.BytesIO(base64.b64decode(content_string))
+        key = f'{folder_name}/{filename}' if folder_name else filename
+        s3_client.upload_fileobj(file_bytes, bucket_name, key)
+        file_url = f's3://{bucket_name}/{key}'
+        store_file_metadata(file_url, tags)
+        return filename
 
-    status_msg = f'Successfully uploaded {len(uploaded_filenames)} file(s).'
+    with ThreadPoolExecutor(max_workers=5) as executor:
+        futures = [
+            executor.submit(_upload_single_file, c, f)
+            for c, f in zip(file_contents, filenames)
+        ]
+        for f in futures:
+            try:
+                uploaded_filenames.append(f.result())
+            except Exception as e:
+                logger.error(f'Failed to upload a file: {e}')
+
+    status_msg = f'Uploaded {len(uploaded_filenames)} file(s) in {bucket_name} bucket.'
     tags_msg = f"Tags applied: {', '.join(tags)}" if tags else 'No tags applied.'
     return status_msg, tags_msg, uploaded_filenames
 
@@ -592,7 +652,13 @@ def filter_files_by_type(file_keys: List[str], file_type: str) -> List[str]:
     return [key for key in file_keys if type_check(key)]
 
 
-def build_gallery_layout(s3_client, bucket_name: str, file_keys: list[str]) -> html.Div:
+def build_gallery_layout(
+    s3_client,
+    bucket_name: str,
+    file_keys: list[str],
+    show_download=True,
+    show_delete=False,
+) -> html.Div:
     """
     Build a responsive gallery layout for S3 files.
 
@@ -602,7 +668,11 @@ def build_gallery_layout(s3_client, bucket_name: str, file_keys: list[str]) -> h
 
     for key in file_keys:
         display_component, tags_str, folder_name, _ = render_file_preview(
-            s3_client, bucket_name, key
+            s3_client,
+            bucket_name,
+            key,
+            show_delete=show_delete,
+            show_download=show_download,
         )
 
         filename = key.split('/')[-1]

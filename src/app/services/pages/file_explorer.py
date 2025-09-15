@@ -119,8 +119,11 @@ def update_auth_banner(_):
                                         dcc.Dropdown(
                                             id='file-selector',
                                             placeholder='Select a file',
-                                            style={'width': '600px'},
                                             clearable=True,
+                                            style={
+                                                'width': '100%',  # take full width of parent container
+                                                'maxWidth': '600px',  # but don’t get too wide on large screens
+                                            },
                                         ),
                                         html.Br(),
                                         html.Div(id='file-display'),
@@ -135,7 +138,10 @@ def update_auth_banner(_):
                                         dcc.Input(
                                             id='edit-tags',
                                             type='text',
-                                            style={'width': '600px'},
+                                            style={
+                                                'width': '100%',  # take full width of parent container
+                                                'maxWidth': '600px',  # but don’t get too wide on large screens
+                                            },
                                         ),
                                         html.Br(),
                                         html.Br(),
@@ -224,12 +230,24 @@ def update_auth_banner(_):
                                         ),
                                         html.Br(),
                                         html.Br(),
-                                        dcc.Upload(
-                                            id='upload-files',
-                                            children=html.Button(
-                                                'Upload File', id='upload-button'
+                                        dcc.Loading(
+                                            id='loading-upload',
+                                            type='circle',  # options: "circle", "dot", "default"
+                                            children=html.Div(
+                                                [
+                                                    dcc.Upload(
+                                                        id='upload-files',
+                                                        children=html.Button(
+                                                            'Upload File(s)',
+                                                            id='upload-button',
+                                                        ),
+                                                        multiple=True,
+                                                    ),
+                                                    html.Div(
+                                                        id='upload-status'
+                                                    ),  # status messages here
+                                                ]
                                             ),
-                                            multiple=True,
                                         ),
                                         html.Br(),
                                         html.Div(id='upload-status'),
@@ -313,7 +331,7 @@ def update_auth_banner(_):
     State('folder-dropdown', 'value'),
     State('new-folder-name', 'value'),
     State('file-tags', 'value'),
-    State('bucket-selector', 'value'),
+    State('upload-bucket-selector', 'value'),
     State('renamed-filenames', 'value'),
 )
 def upload_files_callback(

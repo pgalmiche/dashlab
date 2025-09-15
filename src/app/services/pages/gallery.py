@@ -1,9 +1,10 @@
 import logging
+import os
 
 import dash
 import dash_bootstrap_components as dbc
 from dash import ALL, callback, ctx, dcc, html
-from dash.dependencies import Input, Output
+from dash.dependencies import Input, Output, State
 from dash.exceptions import PreventUpdate
 from flask import session
 
@@ -11,9 +12,10 @@ from app.services.utils.file_utils import (
     build_gallery_layout,
     delete_file_from_s3,
     filter_files_by_type,
+    get_s3_client,
     list_all_files,
     list_s3_folders,
-    s3_client,
+    upload_files_to_s3,
 )
 from app.services.utils.ui_utils import bucket_dropdown
 from config.logging import setup_logging
@@ -105,48 +107,146 @@ def update_auth_banner(_):
                                 html.H2('S3 File Gallery 📸'),
                                 html.Div(
                                     [
+                                        # Hidden store to trigger page load
                                         dcc.Store(
                                             id='gallery-page-load-trigger', data=True
                                         ),
-                                        html.Label('Select Bucket:'),
-                                        bucket_dropdown(
-                                            layout_id='gallery-bucket-selector'
-                                        ),
-                                        html.Label('Select Folder:'),
-                                        dcc.Dropdown(
-                                            id='gallery-folder-dropdown',
-                                            options=[
-                                                {'label': f or '(root)', 'value': f}
-                                                for f in list_s3_folders(
-                                                    s3_client, 'dashlab-bucket'
-                                                )
+                                        # Bucket selection
+                                        dbc.Row(
+                                            [
+                                                dbc.Label(
+                                                    'Select Bucket:',
+                                                    width=4,
+                                                    className='fw-bold',
+                                                ),
+                                                dbc.Col(
+                                                    bucket_dropdown(
+                                                        layout_id='gallery-bucket-selector'
+                                                    ),
+                                                    width=8,
+                                                ),
                                             ],
-                                            value='',  # default root
-                                            clearable=False,
+                                            className='mb-3 align-items-center',
+                                        ),
+                                        # Target folder selection / creation
+                                        dbc.Row(
+                                            [
+                                                dbc.Label(
+                                                    'Select / Create Folder:',
+                                                    width=4,
+                                                    className='fw-bold',
+                                                ),
+                                                dbc.Col(
+                                                    [
+                                                        dcc.Dropdown(
+                                                            id='gallery-folder-dropdown',
+                                                            options=[],  # filled dynamically
+                                                            placeholder='Select existing folder',
+                                                            searchable=True,
+                                                            clearable=True,
+                                                            style={
+                                                                'marginBottom': '5px'
+                                                            },
+                                                        ),
+                                                        dcc.Input(
+                                                            id='gallery-new-folder-input',
+                                                            type='text',
+                                                            placeholder='Or type a new folder name',
+                                                            style={'width': '100%'},
+                                                        ),
+                                                    ],
+                                                    width=8,
+                                                ),
+                                            ],
+                                            className='mb-3 align-items-center',
+                                        ),
+                                        # File type selection
+                                        dbc.Row(
+                                            [
+                                                dbc.Label(
+                                                    'Select File Type:',
+                                                    width=4,
+                                                    className='fw-bold',
+                                                ),
+                                                dbc.Col(
+                                                    dcc.Dropdown(
+                                                        id='type-dropdown',
+                                                        options=[
+                                                            {
+                                                                'label': 'Images',
+                                                                'value': 'image',
+                                                            },
+                                                            {
+                                                                'label': 'PDFs',
+                                                                'value': 'pdf',
+                                                            },
+                                                            {
+                                                                'label': 'Audio',
+                                                                'value': 'audio',
+                                                            },
+                                                            {
+                                                                'label': 'Text',
+                                                                'value': 'text',
+                                                            },
+                                                        ],
+                                                        value='image',
+                                                        clearable=False,
+                                                    ),
+                                                    width=8,
+                                                ),
+                                            ],
+                                            className='mb-3 align-items-center',
                                         ),
                                     ],
                                     style={
-                                        'width': '200px',
-                                        'display': 'inline-block',
-                                        'marginRight': '20px',
+                                        'maxWidth': '600px',
+                                        'padding': '15px',
+                                        'border': '1px solid #dee2e6',
+                                        'borderRadius': '8px',
+                                        'backgroundColor': '#f8f9fa',
                                     },
                                 ),
+                                html.Hr(),
                                 html.Div(
                                     [
-                                        html.Label('Select File Type:'),
-                                        dcc.Dropdown(
-                                            id='type-dropdown',
-                                            options=[
-                                                {'label': 'Images', 'value': 'image'},
-                                                {'label': 'PDFs', 'value': 'pdf'},
-                                                {'label': 'Audio', 'value': 'audio'},
-                                                {'label': 'Text', 'value': 'text'},
-                                            ],
-                                            value='image',
-                                            clearable=False,
+                                        html.H5('Upload Files to Selected Folder:'),
+                                        dcc.Upload(
+                                            id='gallery-upload-files',
+                                            children=dbc.Button(
+                                                [
+                                                    html.I(
+                                                        className='bi bi-upload me-2'
+                                                    ),  # Bootstrap icon
+                                                    'Select Files',
+                                                ],
+                                                color='primary',
+                                                outline=False,
+                                                size='lg',
+                                                className='d-flex align-items-center',
+                                            ),
+                                            multiple=True,
                                         ),
-                                    ],
-                                    style={'width': '200px', 'display': 'inline-block'},
+                                        html.Div(id='gallery-rename-files-container'),
+                                        html.Br(),
+                                        html.Br(),
+                                        dbc.Button(
+                                            id='confirm-upload-btn',
+                                            children=[
+                                                html.I(
+                                                    className='bi bi-upload me-2'
+                                                ),  # Bootstrap icon
+                                                'Upload Renamed Files',
+                                            ],
+                                            color='primary',
+                                            outline=False,
+                                            size='lg',
+                                            className='d-flex align-items-center',
+                                        ),
+                                        html.Div(
+                                            id='gallery-upload-status',
+                                            style={'marginTop': '10px'},
+                                        ),
+                                    ]
                                 ),
                                 html.Hr(),
                                 html.Div(
@@ -177,6 +277,12 @@ def update_auth_banner(_):
                 html.P('🔒 Authentication is required to access protected data pages.'),
                 className='text-muted',
             ),
+            html.P('Browse the default gallery:', className='lead'),
+            # Hidden store to trigger page load
+            dcc.Store(id='gallery-page-load-trigger', data=True),
+            # Default gallery container
+            html.Div(id='default-gallery-container'),
+            html.Br(),
             html.A(
                 'Login',
                 href='/login',
@@ -221,36 +327,143 @@ def populate_gallery_bucket_dropdown(pathname):
     Input('gallery-bucket-selector', 'value'),
 )
 def refresh_folder_options(gallery_bucket):
-    folders = list_s3_folders(s3_client, gallery_bucket)
+    folders = list_s3_folders(get_s3_client(gallery_bucket), gallery_bucket)
     options = [{'label': f or '(root)', 'value': f} for f in folders]
     return options
 
 
 @callback(
     Output('bucket-gallery-container', 'children'),
+    Output('gallery-upload-status', 'children'),
     Output('delete-status', 'children'),
+    Input('confirm-upload-btn', 'n_clicks'),
     Input({'type': 'delete-file-btn', 'file_key': ALL}, 'n_clicks'),
+    State('gallery-upload-files', 'contents'),
+    State('gallery-upload-files', 'filename'),
+    State({'type': 'rename-file', 'index': ALL}, 'value'),
     Input('gallery-folder-dropdown', 'value'),
-    Input('type-dropdown', 'value'),
+    State('gallery-new-folder-input', 'value'),
     Input('gallery-bucket-selector', 'value'),
+    Input('type-dropdown', 'value'),
     prevent_initial_call=True,
 )
-def update_gallery_on_delete(
-    n_clicks_list, selected_folder, selected_type, bucket_name
+def manage_gallery(
+    n_upload,
+    delete_clicks,
+    upload_contents,
+    original_filenames,
+    renamed_filenames,
+    folder,
+    new_folder_name,
+    bucket_name,
+    file_type,
 ):
     triggered = ctx.triggered_id
+    upload_status = ''
+    delete_status = ''
 
-    # Make sure it is a dict before accessing 'type'
+    # --- Handle deletion ---
     if isinstance(triggered, dict) and triggered.get('type') == 'delete-file-btn':
         file_key = triggered['file_key']
-        delete_file_from_s3(s3_client, bucket_name, file_key)
-        status_msg = f'Deleted {file_key}'
-    else:
-        status_msg = ''
+        delete_file_from_s3(get_s3_client(bucket_name), bucket_name, file_key)
+        delete_status = f'Deleted {file_key}'
 
-    # Always refresh gallery
-    all_files = list_all_files(s3_client, bucket_name, selected_folder)
-    filtered_files = filter_files_by_type(all_files, selected_type)
-    gallery_div = build_gallery_layout(s3_client, bucket_name, filtered_files)
+    # --- Handle upload ---
+    elif triggered == 'confirm-upload-btn' and upload_contents:
+        filenames_to_upload = original_filenames
+        if renamed_filenames and len(renamed_filenames) == len(original_filenames):
+            filenames_to_upload = [
+                f'{new}{os.path.splitext(orig)[1]}'
+                for orig, new in zip(original_filenames, renamed_filenames)
+            ]
 
-    return gallery_div, status_msg
+        target_folder = None
+        if new_folder_name and new_folder_name.strip():
+            target_folder = new_folder_name.strip()
+        elif folder:  # selected folder from dropdown
+            target_folder = folder
+        else:
+            target_folder = ''  # fallback to root
+
+        status_msg, _, _ = upload_files_to_s3(
+            get_s3_client(bucket_name),
+            bucket_name,
+            upload_contents,
+            filenames_to_upload,
+            target_folder,
+        )
+        upload_status = status_msg
+
+    # --- Refresh gallery ---
+    all_files = list_all_files(get_s3_client(bucket_name), bucket_name, folder)
+    filtered_files = filter_files_by_type(all_files, file_type)
+    gallery_div = build_gallery_layout(
+        get_s3_client(bucket_name), bucket_name, filtered_files, show_delete=True
+    )
+
+    return gallery_div, upload_status, delete_status
+
+
+@callback(
+    Output('gallery-rename-files-container', 'children'),
+    Input('gallery-upload-files', 'filename'),
+    prevent_initial_call=True,
+)
+def show_rename_inputs(filenames):
+    if not filenames:
+        raise PreventUpdate
+
+    return html.Div(
+        [
+            dbc.Row(
+                [
+                    # Label with fixed width and more space
+                    dbc.Label(
+                        f"Rename '{os.path.splitext(f)[0]}':",  # only filename
+                        width=3,
+                        style={'whiteSpace': 'nowrap', 'marginRight': '15px'},
+                    ),
+                    dbc.Col(
+                        dbc.Input(
+                            id={'type': 'rename-file', 'index': i},
+                            value=os.path.splitext(f)[0],  # prefill without extension
+                            type='text',
+                            style={'width': '100%', 'minWidth': '250px'},
+                        ),
+                        width=9,
+                    ),
+                ],
+                className='mb-3',  # more space between rows
+                align='center',
+            )
+            for i, f in enumerate(filenames)
+        ],
+        style={'maxHeight': '400px', 'overflowY': 'auto'},  # scroll if many files
+    )
+
+
+@callback(
+    Output('gallery-upload-folder-dropdown', 'options'),
+    Input('gallery-bucket-selector', 'value'),
+)
+def populate_upload_folder_options(bucket_name):
+    folders = list_s3_folders(get_s3_client(bucket_name), bucket_name)
+    return [{'label': f or '(root)', 'value': f} for f in folders]
+
+
+@callback(
+    Output('default-gallery-container', 'children'),
+    Input('gallery-page-load-trigger', 'data'),
+)
+def show_default_gallery(_):
+    # Always show dashlab-bucket for non-logged-in users
+    bucket_name = 'dashlab-bucket'
+    folder = ''  # root
+    file_type = 'image'  # default, can adjust
+
+    all_files = list_all_files(get_s3_client(bucket_name), bucket_name, folder)
+    filtered_files = filter_files_by_type(all_files, file_type)
+    gallery_div = build_gallery_layout(
+        get_s3_client(bucket_name), bucket_name, filtered_files
+    )
+    return gallery_div

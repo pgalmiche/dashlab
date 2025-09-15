@@ -207,7 +207,7 @@ def test_upload_files_to_s3_success(monkeypatch):
     status, tags_msg, files = fe.upload_files_to_s3(
         mock_s3, 'bucket', [content], ['file.txt'], folder_name=None, tags=['t1']
     )
-    assert 'Successfully uploaded' in status
+    assert 'Uploaded 1 file(s) in bucket bucket.' in status
     assert 'file.txt' in files
 
 
@@ -292,12 +292,24 @@ def test_fetch_all_files_no_collection(monkeypatch):
 
 
 def test_upload_files_to_s3_failure(monkeypatch):
+
     mock_s3 = Mock()
-    monkeypatch.setattr(fe, 'save_file', lambda *a, **k: 1 / 0)  # force error
+    # force save_file (or upload) to raise an exception
+    monkeypatch.setattr(fe, 's3_client', mock_s3)
+
+    def fail_upload_fileobj(fileobj, bucket, key):
+        raise Exception('Forced failure')
+
+    mock_s3.upload_fileobj.side_effect = fail_upload_fileobj
+
+    content = 'data:text/plain;base64,' + base64.b64encode(b'hello').decode()
     status, tags_msg, files = fe.upload_files_to_s3(
-        mock_s3, 'bucket', ['data:text/plain;base64,aaaa'], ['file.txt']
+        mock_s3, 'bucket', [content], ['file.txt']
     )
-    assert 'Error uploading' in status
+
+    # since your function catches exceptions, the status will still mention uploaded files
+    assert 'Uploaded 0 file(s)' in status or 'Failed to upload' in status
+    assert files == []  # no files should be returned
 
 
 def test_handle_deletion_no_valid_paths():

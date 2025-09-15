@@ -149,19 +149,17 @@ def build_project_section(user):
 
 
 def bucket_dropdown(layout_id: str):
-    """Create a dropdown component for buckets."""
-    # Do NOT access session here at import time.
-    # Return a function that will be called when rendering the layout.
+    """Create a responsive dropdown component for S3 buckets."""
     return html.Div(
         id=layout_id,
+        style={'width': '100%', 'maxWidth': '400px'},  # responsive width
         children=[
             dcc.Dropdown(
                 id=layout_id,
-                # Use callback to populate options dynamically
-                options=[],
+                options=[],  # will be populated dynamically via callback
                 value=None,
                 clearable=False,
-                style={'width': '300px'},
+                style={'width': '100%'},  # take full parent width
             )
         ],
     )

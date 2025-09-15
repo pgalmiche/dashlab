@@ -28,8 +28,8 @@ Run the Flask server which serves both the OAuth routes and the Dash app.
 import logging
 
 import jwt
-from dash import Dash, dcc, html, page_container, page_registry
-from dash.dependencies import Input, Output
+from dash import Dash, callback_context, dcc, html, page_container, page_registry
+from dash.dependencies import ALL, Input, Output, State
 from flask import Flask, redirect, request, session
 from flask_session import Session
 from requests_oauthlib import OAuth2Session
@@ -204,40 +204,36 @@ def dash_home():
 
 
 # --- Navigation UI helpers ---
+
+
 def generate_pages_links():
     """Generate navigation links from Dash pages registry."""
     return [
         dcc.Link(
             page['name'],
             href=page['relative_path'],
+            id={'type': 'navlink', 'index': page['relative_path']},
             className='nav-link',
-            style={
-                'padding': '0 10px',
-                'fontSize': '1.1rem',
-                'fontWeight': '500',
-            },
+            style={'padding': '0 10px', 'fontSize': '1.1rem', 'fontWeight': '500'},
         )
         for page in page_registry.values()
     ]
 
 
 def navbar():
-    """Construct the navigation bar UI."""
     img_tag = html.Img(
-        src='assets/PG.png',
-        width=27,
-        className='d-inline-block align-text-middle me-2',
+        src='assets/PG.png', width=27, className='d-inline-block align-text-middle me-2'
     )
-
     brand_link = dcc.Link(
         [img_tag, 'DashLab'],
         href='/',
         className='navbar-brand d-flex align-items-center',
     )
 
-    logout_link = html.A(
+    logout_link = dcc.Link(
         'Logout',
         href='/logout',
+        id={'type': 'navlink', 'index': 'logout'},
         className='nav-link',
         style={
             'padding': '0 10px',
@@ -251,30 +247,25 @@ def navbar():
     nav_items.append(html.Li(logout_link, className='nav-item'))
 
     return html.Nav(
-        className='navbar navbar-expand-lg bg-dark fixed-top',
-        **{'data-bs-theme': 'dark'},
+        className='navbar navbar-expand-lg navbar-dark bg-dark fixed-top',
         children=[
             html.Div(
-                className='container-fluid d-flex align-items-center',
+                className='container',
                 children=[
                     brand_link,
                     html.Button(
                         className='navbar-toggler',
                         type='button',
-                        **{
-                            'data-bs-toggle': 'collapse',
-                            'data-bs-target': '#navbarSupportedContent',
-                            'aria-controls': 'navbarSupportedContent',
-                            'aria-expanded': 'false',
-                            'aria-label': 'Toggle navigation',
-                        },
+                        id='navbar-toggler-btn',
                         children=html.Span(className='navbar-toggler-icon'),
                     ),
                     html.Div(
-                        className='collapse navbar-collapse justify-content-left',
+                        className='collapse navbar-collapse',
                         id='navbarSupportedContent',
                         children=[
-                            html.Ul(nav_items, className='navbar-nav mb-2 mb-lg-0'),
+                            html.Ul(
+                                nav_items, className='navbar-nav me-auto mb-2 mb-lg-0'
+                            )
                         ],
                     ),
                 ],
@@ -297,7 +288,7 @@ app.layout = html.Div(
             style={'paddingTop': '70px', 'minHeight': '100vh'},
         ),
     ],
-    style={'background-color': '#e3f2fd'},
+    style={'background-color': '#e9ecef'},
 )
 
 
@@ -307,5 +298,23 @@ def update_navbar(pathname):
     """Show navbar only if user is logged in and approved."""
     if is_logged_in_and_approved():
         return navbar()
-    # TODO limit access according to pathname
     return None
+
+
+@app.callback(
+    Output('navbarSupportedContent', 'className'),
+    Input('navbar-toggler-btn', 'n_clicks'),
+    Input({'type': 'navlink', 'index': ALL}, 'n_clicks'),
+    State('navbarSupportedContent', 'className'),
+    prevent_initial_call=True,
+)
+def toggle_collapse(n_toggle, n_links, current_classname):
+    # Determine which input triggered the callback
+    ctx = callback_context
+    if not ctx.triggered:
+        return current_classname
+
+    # If navbar is collapsed, add 'show'; if shown, remove 'show'
+    if 'show' in current_classname:
+        return 'collapse navbar-collapse'
+    return 'collapse navbar-collapse show'

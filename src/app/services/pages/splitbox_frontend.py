@@ -11,8 +11,9 @@ from flask import session
 
 from app.services.utils.file_utils import (
     card_style,
+    get_allowed_folders_for_user,
+    get_current_username,
     list_files_in_s3,
-    list_s3_folders,
     render_file_preview,
     s3_client,
     upload_files_to_s3,
@@ -163,18 +164,27 @@ def update_auth_banner(_):
                                                 'Select a file to work on:',
                                                 className='fw-bold mb-3',
                                             ),
+                                            html.P(
+                                                'Your inputs/ ouputs/ folders are yours only.'
+                                            ),
+                                            html.P(
+                                                'Everything in the shared folder is shared between all the splitbox members!'
+                                            ),
                                             html.Hr(),
                                             html.Div(
                                                 style={
                                                     'display': 'flex',
                                                     'gap': '40px',
                                                     'alignItems': 'flex-start',
+                                                    'flexWrap': 'wrap',
                                                 },
                                                 children=[
                                                     # Left column: Folder choice + tags + upload button
                                                     html.Div(
                                                         style={
-                                                            'flex': '1',
+                                                            'flex': '1 1 300px',  # flex-grow, flex-shrink, flex-basis
+                                                            'minWidth': '250px',
+                                                            'maxWidth': '100%',
                                                             'display': 'flex',
                                                             'flexDirection': 'column',
                                                             'gap': '10px',
@@ -194,7 +204,8 @@ def update_auth_banner(_):
                                                                 placeholder='Select folder',
                                                                 clearable=True,
                                                                 style={
-                                                                    'width': '300px'
+                                                                    'width': '100%',
+                                                                    'maxWidth': '300px',  # cap the width on large screens
                                                                 },
                                                             ),
                                                             dcc.Input(
@@ -202,7 +213,8 @@ def update_auth_banner(_):
                                                                 type='text',
                                                                 placeholder='Or enter new folder name',
                                                                 style={
-                                                                    'width': '300px'
+                                                                    'width': '100%',
+                                                                    'maxWidth': '300px',  # cap the width on large screens
                                                                 },
                                                             ),
                                                             # Tags input
@@ -214,7 +226,8 @@ def update_auth_banner(_):
                                                                 type='text',
                                                                 placeholder='tag1, tag2, ...',
                                                                 style={
-                                                                    'width': '300px'
+                                                                    'width': '100%',
+                                                                    'maxWidth': '300px',  # cap the width on large screens
                                                                 },
                                                             ),
                                                             # Upload button below folder and tags
@@ -234,7 +247,9 @@ def update_auth_banner(_):
                                                     # Right column: Folder selector + file selector (for processing)
                                                     html.Div(
                                                         style={
-                                                            'flex': '2',
+                                                            'flex': '2 1 300px',
+                                                            'minWidth': '250px',
+                                                            'maxWidth': '100%',
                                                             'display': 'flex',
                                                             'flexDirection': 'column',
                                                             'gap': '10px',
@@ -253,7 +268,8 @@ def update_auth_banner(_):
                                                                 placeholder='Select a folder',
                                                                 clearable=True,
                                                                 style={
-                                                                    'width': '300px'
+                                                                    'width': '100%',
+                                                                    'maxWidth': '500px',  # cap the width on large screens
                                                                 },
                                                             ),
                                                             html.Label(
@@ -263,7 +279,8 @@ def update_auth_banner(_):
                                                                 id='splitbox-file-selector',
                                                                 placeholder='Select a file',
                                                                 style={
-                                                                    'width': '600px'
+                                                                    'width': '100%',
+                                                                    'maxWidth': '600px',  # cap the width on large screens
                                                                 },
                                                                 clearable=True,
                                                             ),
@@ -461,12 +478,19 @@ def splitbox_main_callback(
     bucket_name = 'splitbox-bucket'
     status_msg = ''
 
-    # --- Populate folder options for both save & select dropdowns ---
-    folders = list_s3_folders(s3_client, bucket_name)
-    # Map root folder to empty string
-    folder_options = [{'label': f or '(root)', 'value': f or ''} for f in folders]
+    username = get_current_username(session)
+    folders = get_allowed_folders_for_user(session, s3_client, bucket_name)
+    folder_options = [
+        {
+            'label': (
+                f.replace(f'{username}/', '') if f.startswith(f'{username}/') else f
+            ),
+            'value': f,
+        }
+        for f in folders
+    ]
 
-    # Default selections
+    # --- Default selections ---
     folder_value = (
         folder_trigger_value
         if folder_trigger_value is not None
@@ -481,19 +505,26 @@ def splitbox_main_callback(
     # --- Populate file dropdown for selected folder ---
     file_options = []
     file_value = None
-    if folder_value is not None:
+    if folder_value:
         file_options = list_files_in_s3(s3_client, bucket_name, folder_value)
         file_value = file_options[0]['value'] if file_options else None
 
     # --- Handle upload ---
     if triggered_id == 'splitbox-upload-file' and file_content and filename:
-        # Determine the folder to save (allow root folder "")
-        folder_name = (
-            new_folder_name.strip() if new_folder_name else selected_save_folder
-        )
-        if folder_name is None:
-            folder_name = ''  # root folder
 
+        if new_folder_name:
+            # Always create new folders in the user's namespace unless shared is selected
+            if selected_save_folder == 'shared/':
+                folder_name = f'shared/{new_folder_name.strip()}'
+            else:
+                folder_name = f'{username}/inputs/{new_folder_name.strip()}'
+        else:
+            # If no new folder, use the selected folder if allowed
+            folder_name = (
+                selected_save_folder if selected_save_folder else f'{username}/inputs'
+            )
+
+        # --- Parse tags safely ---
         tags_list = (
             [tag.strip() for tag in file_tags.split(',') if tag.strip()]
             if file_tags
@@ -501,7 +532,6 @@ def splitbox_main_callback(
         )
 
         try:
-            # Upload the file (pass content as-is if your helper handles decoding)
             _, _, uploaded_files = upload_files_to_s3(
                 s3_client,
                 bucket_name,
@@ -521,21 +551,17 @@ def splitbox_main_callback(
                 file_value,
             )
 
-        status_msg = (
-            f"File '{filename}' uploaded successfully to '{folder_name or '(root)'}'"
-        )
+        status_msg = f"File '{filename}' uploaded successfully to '{folder_name}'"
 
-        # Update folder dropdowns
+        # --- Update folder dropdowns with new folder ---
         if folder_name not in [o['value'] for o in folder_options]:
-            folder_options.append(
-                {'label': folder_name or '(root)', 'value': folder_name}
-            )
+            folder_options.append({'label': folder_name, 'value': folder_name})
+
         folder_value = folder_name
         save_folder_value = folder_name
 
-        # Refresh file dropdown with all files in that folder
+        # --- Refresh file dropdown with all files in that folder ---
         file_options = list_files_in_s3(s3_client, bucket_name, folder_name)
-        # Automatically select the newly uploaded file
         file_value = next(
             (f['value'] for f in file_options if f['label'] == filename), None
         )
