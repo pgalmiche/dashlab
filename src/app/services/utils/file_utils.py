@@ -232,7 +232,7 @@ def is_pdf(file_key: str) -> bool:
 
 
 def is_audio(file_key: str) -> bool:
-    return file_key.lower().endswith(('.mp3', '.wav', '.ogg', 'm4a'))
+    return file_key.lower().endswith(('.mp3', '.wav', '.ogg', '.m4a', '.webm'))
 
 
 def is_raw_text(file_key: str) -> bool:
@@ -556,11 +556,26 @@ def upload_files_to_s3(
     filenames: list[str],
     folder_name: str = '',
     tags: list[str] = None,
+    use_presigned: bool = False,
+    expires_in: int = 300,  # presigned URL expiry in seconds
 ):
-    uploaded_filenames = []
-    tags = tags or []
+    """
+    Upload files to S3. If use_presigned=True, return presigned POSTs instead of uploading via server.
 
-    def _upload_single_file(content, filename):
+    :param s3_client: boto3 S3 client
+    :param bucket_name: S3 bucket name
+    :param file_contents: List of base64-encoded file strings
+    :param filenames: List of filenames
+    :param folder_name: Optional folder prefix
+    :param tags: Optional list of tags
+    :param use_presigned: If True, generate presigned POSTs instead of uploading directly
+    :param expires_in: Presigned URL expiry (seconds)
+    :return: (status_msg, tags_msg, uploaded_filenames or presigned_posts)
+    """
+    tags = tags or []
+    uploaded_files = []
+
+    def _upload_direct(content, filename):
         content_type, content_string = content.split(',')
         file_bytes = io.BytesIO(base64.b64decode(content_string))
         key = f'{folder_name}/{filename}' if folder_name else filename
@@ -569,20 +584,34 @@ def upload_files_to_s3(
         store_file_metadata(file_url, tags)
         return filename
 
+    def _generate_presigned(content, filename):
+        key = f'{folder_name}/{filename}' if folder_name else filename
+        presigned_post = s3_client.generate_presigned_post(
+            Bucket=bucket_name,
+            Key=key,
+            Fields={'Content-Type': 'application/octet-stream'},
+            Conditions=[['starts-with', '$Content-Type', '']],
+            ExpiresIn=expires_in,
+        )
+        return {'filename': filename, 'key': key, 'presigned_post': presigned_post}
+
     with ThreadPoolExecutor(max_workers=5) as executor:
-        futures = [
-            executor.submit(_upload_single_file, c, f)
-            for c, f in zip(file_contents, filenames)
-        ]
+        futures = []
+        for content, filename in zip(file_contents, filenames):
+            if use_presigned:
+                futures.append(executor.submit(_generate_presigned, content, filename))
+            else:
+                futures.append(executor.submit(_upload_direct, content, filename))
+
         for f in futures:
             try:
-                uploaded_filenames.append(f.result())
+                uploaded_files.append(f.result())
             except Exception as e:
                 logger.error(f'Failed to upload a file: {e}')
 
-    status_msg = f'Uploaded {len(uploaded_filenames)} file(s) in {bucket_name} bucket.'
+    status_msg = f'Processed {len(uploaded_files)} file(s) in {bucket_name} bucket.'
     tags_msg = f"Tags applied: {', '.join(tags)}" if tags else 'No tags applied.'
-    return status_msg, tags_msg, uploaded_filenames
+    return status_msg, tags_msg, uploaded_files
 
 
 def handle_deletion(

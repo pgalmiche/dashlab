@@ -5,14 +5,16 @@ from urllib.parse import urlparse
 import dash
 import dash_bootstrap_components as dbc
 import requests
-from dash import callback, callback_context, dcc, html
+from dash import ALL, callback, callback_context, ctx, dcc, html
 from dash.dependencies import Input, Output, State
-from flask import session
+from flask import jsonify, request, session
 
 from app.services.utils.file_utils import (
     card_style,
+    delete_file_from_s3,
     get_allowed_folders_for_user,
     get_current_username,
+    get_s3_client,
     list_files_in_s3,
     render_file_preview,
     s3_client,
@@ -23,6 +25,7 @@ from config.settings import settings
 
 setup_logging()
 logger = logging.getLogger(__name__)
+logging.getLogger('pymongo').setLevel(logging.WARNING)  # only show warnings and errors
 
 if settings.env != 'testing':
     dash.register_page(__name__, path='/splitbox', name='SplitBox', order=2)
@@ -242,6 +245,49 @@ def update_auth_banner(_):
                                                             html.Div(
                                                                 id='splitbox-upload-status'
                                                             ),
+                                                            html.Hr(),
+                                                            html.H4(
+                                                                '🎤 Or record directly:',
+                                                                className='fw-bold mt-3',
+                                                            ),
+                                                            html.Label(
+                                                                'This recording will be saved in your inputs/recorded/ folder.'
+                                                            ),
+                                                            dcc.Input(
+                                                                id='splitbox-recording-filename',
+                                                                type='text',
+                                                                placeholder='Recording name (no extension)',
+                                                                style={
+                                                                    'width': '100%',
+                                                                    'maxWidth': '300px',
+                                                                },
+                                                            ),
+                                                            # Hidden Store for username
+                                                            dcc.Store(
+                                                                id='splitbox-username-store',
+                                                                data=get_current_username(
+                                                                    session
+                                                                ),  # set username from Flask session
+                                                            ),
+                                                            html.Button(
+                                                                'Start Recording',
+                                                                id='splitbox-start-recording',
+                                                                n_clicks=0,
+                                                                className='btn btn-secondary',
+                                                            ),
+                                                            html.Button(
+                                                                'Stop & Upload',
+                                                                id='splitbox-stop-recording',
+                                                                n_clicks=0,
+                                                                className='btn btn-primary',
+                                                            ),
+                                                            dcc.Store(
+                                                                id='splitbox-uploaded-recording-key'
+                                                            ),
+                                                            html.Div(
+                                                                id='splitbox-recording-status',
+                                                                className='mt-2 text-info',
+                                                            ),
                                                         ],
                                                     ),
                                                     # Right column: Folder selector + file selector (for processing)
@@ -284,17 +330,32 @@ def update_auth_banner(_):
                                                                 },
                                                                 clearable=True,
                                                             ),
+                                                            html.Div(
+                                                                id='splitbox-delete-file-status',
+                                                                className='mt-2 text-info',
+                                                            ),
+                                                            html.Hr(
+                                                                style={
+                                                                    'marginTop': '75px',
+                                                                    'marginBottom': '30px',
+                                                                }
+                                                            ),
+                                                            html.H3(
+                                                                '📂 Selected File Preview:',
+                                                                className='fw-bold mb-3',
+                                                            ),
+                                                            html.Div(
+                                                                id='splitbox-file-display'
+                                                            ),
+                                                            html.Br(),
+                                                            html.Div(
+                                                                id='splitbox-delete-file-status',
+                                                                className='mt-2 text-info',
+                                                            ),
                                                         ],
                                                     ),
                                                 ],
                                             ),
-                                            html.Br(),
-                                            html.Label(
-                                                '📂 File Preview:',
-                                                style={'fontWeight': 'bold'},
-                                            ),
-                                            html.Div(id='splitbox-file-display'),
-                                            html.Br(),
                                         ]
                                     ),
                                     className='mb-3',
@@ -375,10 +436,21 @@ def display_selected_file(file_key: Optional[str]):
     if not file_key:
         return html.Div('No file selected.'), '', None, ''
 
+    # Extract just the filename from the S3 key
+    filename = file_key.split('/')[-1]
+
     display_component, _, _, _ = render_file_preview(
-        s3_client, 'splitbox-bucket', file_key
+        s3_client, 'splitbox-bucket', file_key, show_delete=True
     )
-    return display_component
+    return html.Div(
+        [
+            html.Div(
+                f'Selected file: {filename}',
+                style={'marginBottom': '10px'},
+            ),
+            display_component,
+        ]
+    )
 
 
 def render_audio_players_with_download(audio_urls):
@@ -460,6 +532,7 @@ def run_splitbox(n_clicks, file_key):
     Input('splitbox-upload-file', 'contents'),
     Input('splitbox-folder-selector', 'value'),  # folder change
     Input('url', 'pathname'),  # page load trigger
+    Input('splitbox-uploaded-recording-key', 'data'),
     State('splitbox-upload-file', 'filename'),
     State('splitbox-save-folder-selector', 'value'),
     State('splitbox-new-folder-name', 'value'),
@@ -469,6 +542,7 @@ def splitbox_main_callback(
     file_content,
     folder_trigger_value,
     pathname,
+    uploaded_recording_key,
     filename,
     selected_save_folder,
     new_folder_name,
@@ -509,6 +583,22 @@ def splitbox_main_callback(
         file_options = list_files_in_s3(s3_client, bucket_name, folder_value)
         file_value = file_options[0]['value'] if file_options else None
 
+    # --- Handle mic recording upload ---
+    if triggered_id == 'splitbox-uploaded-recording-key' and uploaded_recording_key:
+        status_msg = f'🎤 Recording uploaded successfully: {uploaded_recording_key}'
+        # Put the recording in the dropdowns just like a file upload
+        folder_name = f'{username}/inputs'
+        if folder_name not in [o['value'] for o in folder_options]:
+            folder_options.append({'label': folder_name, 'value': folder_name})
+
+        folder_value = folder_name
+        save_folder_value = folder_name
+
+        file_options = list_files_in_s3(s3_client, bucket_name, folder_name)
+        file_value = next(
+            (f['value'] for f in file_options if f['value'].endswith(filename)), None
+        )
+
     # --- Handle upload ---
     if triggered_id == 'splitbox-upload-file' and file_content and filename:
 
@@ -521,7 +611,7 @@ def splitbox_main_callback(
         else:
             # If no new folder, use the selected folder if allowed
             folder_name = (
-                selected_save_folder if selected_save_folder else f'{username}/inputs'
+                selected_save_folder if selected_save_folder else f'{username}/inputs/'
             )
 
         # --- Parse tags safely ---
@@ -575,3 +665,128 @@ def splitbox_main_callback(
         file_options,
         file_value,
     )
+
+
+app = dash.get_app()
+
+app.clientside_callback(
+    """
+async function(startClicks, stopClicks, filenameInput, usernameInput) {
+    if (!window.splitboxRecorder) {
+        window.splitboxRecorder = null;
+        window.splitboxChunks = [];
+        window.startClicks = 0;
+        window.stopClicks = 0;
+    }
+
+    if (!filenameInput || filenameInput.trim() === "") {
+        return ["❌ Please enter a recording name before starting!", null];
+    }
+
+    const username = usernameInput || "shared";
+    const saveKey = `${username}/inputs/recorded/${filenameInput.trim()}.webm`;
+
+    if (startClicks > window.startClicks) {
+        window.startClicks = startClicks;
+        try {
+            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            window.splitboxRecorder = new MediaRecorder(stream);
+            window.splitboxChunks = [];
+            window.splitboxRecorder.ondataavailable = e => window.splitboxChunks.push(e.data);
+            window.splitboxRecorder.start();
+            return ["🎤 Recording started!", null];
+        } catch (err) {
+            return ["❌ Could not start recording: " + err.message, null];
+        }
+    }
+
+    if (stopClicks > window.stopClicks && window.splitboxRecorder) {
+        window.stopClicks = stopClicks;
+        return new Promise((resolve) => {
+            window.splitboxRecorder.onstop = async () => {
+                const blob = new Blob(window.splitboxChunks, { type: "audio/webm" });
+                try {
+                    const resp = await fetch("/splitbox/generate-presigned-upload", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ file_key: saveKey })
+                    });
+                    if (!resp.ok) throw new Error(`Server error: ${resp.status}`);
+                    const data = await resp.json();
+                    const uploadUrl = data.url;
+
+                    const formData = new FormData();
+                    Object.entries(uploadUrl.fields).forEach(([k,v]) => formData.append(k,v));
+                    formData.append("file", blob);
+
+                    const uploadResp = await fetch(uploadUrl.url, { method: "POST", body: formData });
+                    if (!uploadResp.ok) throw new Error(`Upload failed: ${uploadResp.status}`);
+
+                    // Return both status message and uploaded file key
+                    resolve(["✅ Recording uploaded successfully!", saveKey]);
+                } catch (err) {
+                    resolve(["❌ Upload failed: " + err.message, null]);
+                }
+            };
+            window.splitboxRecorder.stop();
+        });
+    }
+
+    return [window.dash_clientside.no_update, null];
+}
+    """,
+    [
+        Output('splitbox-recording-status', 'children'),
+        Output('splitbox-uploaded-recording-key', 'data'),
+    ],
+    [
+        Input('splitbox-start-recording', 'n_clicks'),
+        Input('splitbox-stop-recording', 'n_clicks'),
+    ],
+    [
+        State('splitbox-recording-filename', 'value'),
+        State('splitbox-username-store', 'data'),
+    ],
+)
+
+
+@dash.get_app().server.route('/splitbox/generate-presigned-upload', methods=['POST'])
+def splitbox_generate_presigned_upload():
+    """
+    Generate a presigned POST URL for audio recording upload
+    """
+    data = request.get_json()  # parse JSON from fetch
+    file_key = data.get('file_key')  # get the filename from the client
+
+    if not file_key:
+        return jsonify({'error': 'file_key is required'}), 400
+
+    presigned_post = s3_client.generate_presigned_post(
+        Bucket='splitbox-bucket',
+        Key=file_key,
+        Fields={'Content-Type': 'audio/webm'},
+        Conditions=[['starts-with', '$Content-Type', 'audio/webm']],
+        ExpiresIn=300,
+    )
+    return jsonify({'url': presigned_post, 'file_key': file_key})
+
+
+@callback(
+    Output('splitbox-delete-file-status', 'children'),
+    Input({'type': 'delete-file-btn', 'file_key': ALL}, 'n_clicks'),
+    prevent_initial_call=True,
+)
+def manage_deletions(delete_clicks):
+    triggered = ctx.triggered_id
+    delete_status = ''
+    bucket_name = 'splitbox-bucket'
+
+    # Only proceed if a button was actually clicked
+    if isinstance(triggered, dict) and triggered.get('type') == 'delete-file-btn':
+        file_key = triggered['file_key']
+        # Safety check: only delete if the click count > 0
+        if delete_clicks[delete_clicks.index(ctx.triggered[0]['value'])] > 0:
+            delete_file_from_s3(get_s3_client(bucket_name), bucket_name, file_key)
+            delete_status = f'Deleted {file_key}'
+
+    return delete_status

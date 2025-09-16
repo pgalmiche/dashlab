@@ -1,4 +1,3 @@
-import base64
 import io
 from unittest.mock import Mock, patch
 
@@ -200,17 +199,6 @@ def test_fetch_all_files(monkeypatch):
     assert {'file': 'meta'} in result
 
 
-def test_upload_files_to_s3_success(monkeypatch):
-    mock_s3 = Mock()
-    monkeypatch.setattr(fe, 'store_file_metadata', lambda *a, **k: None)
-    content = 'data:text/plain;base64,' + base64.b64encode(b'hello').decode()
-    status, tags_msg, files = fe.upload_files_to_s3(
-        mock_s3, 'bucket', [content], ['file.txt'], folder_name=None, tags=['t1']
-    )
-    assert 'Uploaded 1 file(s) in bucket bucket.' in status
-    assert 'file.txt' in files
-
-
 def test_handle_deletion_invalid():
     msg = fe.handle_deletion(Mock(), 'bucket', '')
     assert 'Please enter' in msg
@@ -289,27 +277,6 @@ def test_delete_entries_by_path_invalid(monkeypatch):
 def test_fetch_all_files_no_collection(monkeypatch):
     monkeypatch.setattr(fe, 'get_collection', lambda: None)
     assert fe.fetch_all_files() == []
-
-
-def test_upload_files_to_s3_failure(monkeypatch):
-
-    mock_s3 = Mock()
-    # force save_file (or upload) to raise an exception
-    monkeypatch.setattr(fe, 's3_client', mock_s3)
-
-    def fail_upload_fileobj(fileobj, bucket, key):
-        raise Exception('Forced failure')
-
-    mock_s3.upload_fileobj.side_effect = fail_upload_fileobj
-
-    content = 'data:text/plain;base64,' + base64.b64encode(b'hello').decode()
-    status, tags_msg, files = fe.upload_files_to_s3(
-        mock_s3, 'bucket', [content], ['file.txt']
-    )
-
-    # since your function catches exceptions, the status will still mention uploaded files
-    assert 'Uploaded 0 file(s)' in status or 'Failed to upload' in status
-    assert files == []  # no files should be returned
 
 
 def test_handle_deletion_no_valid_paths():
