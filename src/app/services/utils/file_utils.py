@@ -750,3 +750,20 @@ def build_gallery_layout(
             'justifyContent': 'flex-start',
         },
     )
+
+
+def generate_presigned_uploads(s3_client, bucket_name, filenames, folder_name=''):
+    presigned_posts = []
+    for filename in filenames:
+        key = f'{folder_name}/{filename}' if folder_name else filename
+        presigned_post = s3_client.generate_presigned_post(
+            Bucket=bucket_name,
+            Key=key,
+            Fields={'Content-Type': 'application/octet-stream'},
+            Conditions=[['starts-with', '$Content-Type', '']],
+            ExpiresIn=3600,  # 1 hour
+        )
+        presigned_posts.append(
+            {'filename': filename, 'key': key, 'presigned_post': presigned_post}
+        )
+    return presigned_posts
