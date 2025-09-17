@@ -4,6 +4,7 @@ from urllib.parse import urlparse
 
 import dash
 import dash_bootstrap_components as dbc
+import plotly.io as pio
 import requests
 from dash import ALL, callback, callback_context, ctx, dcc, html
 from dash.dependencies import Input, Output, State
@@ -370,6 +371,26 @@ def update_auth_banner(_):
                                             ),
                                             html.Hr(),
                                             html.Label(
+                                                'Click to analyze the selected file:',
+                                                style={'fontWeight': 'bold'},
+                                            ),
+                                            html.Br(),
+                                            html.Button(
+                                                'Analyze file',
+                                                id='run-analyze-btn',
+                                                n_clicks=0,
+                                                style={'marginTop': '10px'},
+                                            ),
+                                            html.Br(),
+                                            dcc.Loading(
+                                                id='loading-analyze',
+                                                type='circle',
+                                                children=html.Div(
+                                                    id='splitbox-analysis-results'
+                                                ),
+                                            ),
+                                            html.Hr(),
+                                            html.Label(
                                                 'Click on the button to run the track splitter on the selected file:',
                                                 style={'fontWeight': 'bold'},
                                             ),
@@ -502,7 +523,13 @@ def run_splitbox(n_clicks, file_key):
     try:
         # Disable button while processing
         url = 'http://splitbox-api-prod:8888/split_sources'
-        params = {'path': f's3://splitbox-bucket/{file_key}'}
+
+        output_path = f's3://splitbox-bucket/outputs/{file_key}/split/'
+
+        params = {
+            'path': f's3://splitbox-bucket/{file_key}',  # input file
+            'output_path': output_path,  # where analysis results will be saved
+        }
 
         resp = requests.get(url, params=params, timeout=300)
         if resp.status_code != 200:
@@ -790,3 +817,52 @@ def manage_deletions(delete_clicks):
             delete_status = f'Deleted {file_key}'
 
     return delete_status
+
+
+@callback(
+    Output('splitbox-analysis-results', 'children'),
+    Output('run-analyze-btn', 'disabled'),
+    Input('run-analyze-btn', 'n_clicks'),
+    State('splitbox-file-selector', 'value'),
+    prevent_initial_call=True,
+)
+def run_analyze(n_clicks, file_key):
+    if not file_key or n_clicks <= 0:
+        return html.Div('Please select a file and click Analyze.'), False
+
+    try:
+        url = 'http://splitbox-api-prod:8888/analyze'
+        params = {'path': f's3://splitbox-bucket/{file_key}'}
+
+        # Define where results should go in S3 (same folder as input, inside /analysis/)
+        output_path = f's3://splitbox-bucket/outputs/{file_key}/analysis/'
+
+        params = {
+            'path': f's3://splitbox-bucket/{file_key}',  # input file
+            'output_path': output_path,  # where analysis results will be saved
+        }
+
+        resp = requests.get(url, params=params, timeout=300)
+        if resp.status_code != 200:
+            return html.Div(f'❌ Error {resp.status_code}: {resp.text}'), False
+
+        data = resp.json()
+        json_file = data.get(
+            'plot_file'
+        )  # e.g. "s3://splitbox-bucket/analysis/file1.json"
+        if not json_file:
+            return html.Div('⚠️ No plot file returned.'), False
+
+        # Extract bucket and key from s3:// path
+        bucket = json_file.split('/')[2]
+        key = '/'.join(json_file.split('/')[3:])
+        client = get_s3_client(bucket)
+        s3_resp = client.get_object(Bucket=bucket, Key=key)
+        plot_json = s3_resp['Body'].read().decode('utf-8')
+
+        fig = pio.from_json(plot_json)
+
+        return dcc.Graph(figure=fig, style={'width': '100%', 'height': '500px'}), False
+
+    except Exception as e:
+        return html.Div(f'⚠️ Error running analysis: {str(e)}'), False

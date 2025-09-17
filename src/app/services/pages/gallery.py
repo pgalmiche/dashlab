@@ -185,6 +185,10 @@ def update_auth_banner(_):
                                                                 'value': 'audio',
                                                             },
                                                             {
+                                                                'label': 'Video',
+                                                                'value': 'video',
+                                                            },
+                                                            {
                                                                 'label': 'Text',
                                                                 'value': 'text',
                                                             },
@@ -364,10 +368,12 @@ def manage_gallery(
     triggered = ctx.triggered_id
     delete_status = ''
 
+    client = get_s3_client(bucket_name)
+
     # --- Handle deletion ---
     if isinstance(triggered, dict) and triggered.get('type') == 'delete-file-btn':
         file_key = triggered['file_key']
-        delete_file_from_s3(get_s3_client(bucket_name), bucket_name, file_key)
+        delete_file_from_s3(client, bucket_name, file_key)
         delete_status = f'Deleted {file_key}'
 
     # --- Handle upload ---
@@ -387,8 +393,8 @@ def manage_gallery(
         else:
             target_folder = ''  # fallback to root
 
-        status_msg, _, _ = upload_files_to_s3(
-            get_s3_client(bucket_name),
+        _, _, _ = upload_files_to_s3(
+            client,
             bucket_name,
             upload_contents,
             filenames_to_upload,
@@ -396,10 +402,10 @@ def manage_gallery(
         )
 
     # --- Refresh gallery ---
-    all_files = list_all_files(get_s3_client(bucket_name), bucket_name, folder)
+    all_files = list_all_files(client, bucket_name, folder)
     filtered_files = filter_files_by_type(all_files, file_type)
     gallery_div = build_gallery_layout(
-        get_s3_client(bucket_name), bucket_name, filtered_files, show_delete=True
+        client, bucket_name, filtered_files, show_delete=True
     )
 
     return gallery_div, delete_status

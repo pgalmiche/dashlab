@@ -51,6 +51,7 @@ BUCKET_REGIONS_MAP = {
     'dashlab-bucket': 'us-east-1',
     'galmiche-family': 'eu-west-3',
     'pgvv': 'eu-west-3',
+    'splitbox-contributor': 'eu-west-3',
 }
 
 
@@ -235,6 +236,10 @@ def is_audio(file_key: str) -> bool:
     return file_key.lower().endswith(('.mp3', '.wav', '.ogg', '.m4a', '.webm'))
 
 
+def is_video(file_key: str) -> bool:
+    return file_key.lower().endswith(('.mp4', '.mov', '.avi', '.mkv', '.webm', '.flv'))
+
+
 def is_raw_text(file_key: str) -> bool:
     return file_key.lower().endswith(
         ('.txt', '.md', '.log', '.csv', '.json', '.xml', '.yaml', '.yml')
@@ -363,6 +368,17 @@ def render_file_preview(
         except Exception as e:
             logger.error(f'Error reading text file {file_key}: {e}')
             main_component = html.Div('Could not read file contents.')
+    elif is_video(file_key):
+        main_component = html.Video(
+            src=file_url,
+            controls=True,
+            style={
+                'width': '100%',
+                'maxWidth': '600px',
+                'display': 'block',
+                'marginBottom': '10px',
+            },
+        )
     else:
         main_component = html.Div('Preview not available.')
 
@@ -673,6 +689,7 @@ def filter_files_by_type(file_keys: List[str], file_type: str) -> List[str]:
         'pdf': is_pdf,
         'audio': is_audio,
         'text': is_raw_text,
+        'video': is_video,
     }.get(file_type.lower())
 
     if not type_check:

@@ -230,10 +230,10 @@ def navbar():
         className='navbar-brand d-flex align-items-center',
     )
 
-    logout_link = dcc.Link(
+    # use html.A instead of dcc.Link
+    logout_link = html.A(
         'Logout',
         href='/logout',
-        id={'type': 'navlink', 'index': 'logout'},
         className='nav-link',
         style={
             'padding': '0 10px',

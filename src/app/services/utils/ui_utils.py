@@ -20,6 +20,7 @@ bucket_attribute_map = {
     'dashlab-bucket': 'custom:approved',
     'galmiche-family': 'custom:galmiche-family',
     'pgvv': 'custom:pgvv',
+    'splitbox-contributor': 'custom:splitbox-contributor',
 }
 
 # Centralized project definitions
