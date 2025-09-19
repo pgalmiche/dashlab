@@ -19,6 +19,7 @@ Import from pages to quickly set up working UI for various projects, with displa
 
 import base64
 import io
+import json
 import logging
 import mimetypes
 import os
@@ -28,6 +29,7 @@ from typing import List, Optional, Union
 
 import boto3
 import dash_bootstrap_components as dbc
+import plotly.io as pio
 from botocore.exceptions import BotoCoreError, ClientError
 from dash import dcc, html
 from pymongo import MongoClient
@@ -367,6 +369,21 @@ def render_file_preview(
             controls=True,
             style={'width': '100%', 'height': 'auto', 'borderRadius': '6px'},
         )
+    elif file_key.endswith('_viz.json'):
+        # --- Special case: Analysis JSON visualization files ---
+        s3_resp = s3_client.get_object(Bucket=bucket_name, Key=file_key)
+        analysis_json = json.loads(s3_resp['Body'].read().decode('utf-8'))
+
+        figs = []
+        for k, fig_json in analysis_json.items():
+            fig = pio.from_json(fig_json)
+            figs.append(
+                dcc.Graph(
+                    figure=fig,
+                    style={'width': '100%', 'height': '400px', 'marginBottom': '20px'},
+                )
+            )
+        main_component = html.Div(figs)
     else:
         main_component = html.Div(
             'Preview not available',
@@ -836,3 +853,48 @@ def generate_presigned_uploads(s3_client, bucket_name, filenames, folder_name=''
             {'filename': filename, 'key': key, 'presigned_post': presigned_post}
         )
     return presigned_posts
+
+
+def get_viz_file_key(file_key: str, username: str = None) -> str:
+    """
+    Compute the expected S3 key for the Plotly viz JSON.
+
+    Args:
+        file_key: full path of the input file relative to S3 bucket, e.g. "Mikasound/billie_chino.mp3"
+        username: optional username prefix (if your outputs are under {username}/outputs/...)
+
+    Returns:
+        str: S3 key to the _viz.json
+    """
+    # Extract the file stem
+    file_stem, _ = os.path.splitext(os.path.basename(file_key))
+
+    # Get folder path of file_key without filename
+    folder_path = os.path.dirname(file_key)  # e.g., "Mikasound" or "inputs/recorded"
+
+    # Build the key with optional username prefix
+    prefix = f'{username}/' if username else ''
+    viz_key = f'{prefix}outputs/{folder_path}/{os.path.basename(file_key)}/analysis/{file_stem}_viz.json'
+    return viz_key
+
+
+def s3_viz_exists(s3_client, bucket: str, file_key: str, username: str = None) -> bool:
+    """
+    Return True if the _viz.json exists for the given file in S3.
+
+    Args:
+        s3_client: boto3 S3 client
+        bucket: S3 bucket name
+        file_key: original audio file key
+        username: optional prefix if using per-user output folders
+
+    Returns:
+        bool
+    """
+    viz_key = get_viz_file_key(file_key, username=username)
+    try:
+        s3_client.head_object(Bucket=bucket, Key=viz_key)
+        return True
+    except s3_client.exceptions.ClientError:
+        # Could check error code 404 specifically if needed
+        return False

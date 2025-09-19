@@ -3,7 +3,6 @@ from urllib.parse import urlparse
 
 import dash
 import dash_bootstrap_components as dbc
-import plotly.io as pio
 import requests
 from dash import ALL, callback, ctx, dcc, html
 from dash.dependencies import Input, Output, State
@@ -15,10 +14,12 @@ from app.services.utils.file_utils import (
     get_allowed_folders_for_user,
     get_current_username,
     get_s3_client,
+    get_viz_file_key,
     list_files_in_s3,
     move_file_and_update_metadata,
     render_file_preview,
     s3_client,
+    s3_viz_exists,
     upload_files_to_s3,
 )
 from config.logging import setup_logging
@@ -375,11 +376,16 @@ def update_auth_banner(_):
                                                 style={'fontWeight': 'bold'},
                                             ),
                                             html.Br(),
-                                            html.Button(
+                                            dbc.Button(
                                                 'Analyze file',
                                                 id='run-analyze-btn',
                                                 n_clicks=0,
-                                                style={'marginTop': '10px'},
+                                                color='primary',  # Bootstrap primary color
+                                                size='lg',  # large button
+                                                className='mb-2',  # margin bottom
+                                                style={
+                                                    'width': '200px'
+                                                },  # optional fixed width
                                             ),
                                             html.Br(),
                                             dcc.Loading(
@@ -395,11 +401,22 @@ def update_auth_banner(_):
                                                 style={'fontWeight': 'bold'},
                                             ),
                                             html.Br(),
-                                            html.Button(
-                                                'Split your track',
+                                            dbc.Button(
+                                                [
+                                                    html.I(
+                                                        className='bi bi-scissors me-2'
+                                                    ),
+                                                    'Split your track',
+                                                ],
                                                 id='run-splitbox-btn',
                                                 n_clicks=0,
-                                                style={'marginTop': '10px'},
+                                                color='success',  # Green color to indicate “action”
+                                                size='lg',  # Large button
+                                                className='mb-3',  # Margin bottom
+                                                style={
+                                                    'width': '200px',  # Optional fixed width for consistency
+                                                    'transition': 'all 0.2s ease-in-out',  # Smooth hover effect
+                                                },
                                             ),
                                             html.Br(),
                                             dcc.Loading(
@@ -499,7 +516,8 @@ def run_splitbox(n_clicks, file_key):
         # Disable button while processing
         url = 'http://splitbox-api-prod:8888/split_sources'
 
-        output_path = f's3://splitbox-bucket/outputs/{file_key}/split/'
+        username = get_current_username(session)
+        output_path = f's3://splitbox-bucket/{username}/outputs/split/{file_key}/'
 
         params = {
             'path': f's3://splitbox-bucket/{file_key}',  # input file
@@ -646,55 +664,6 @@ def manage_deletions(delete_clicks):
             delete_status = f'Deleted {file_key}'
 
     return delete_status
-
-
-@callback(
-    Output('splitbox-analysis-results', 'children'),
-    Output('run-analyze-btn', 'disabled'),
-    Input('run-analyze-btn', 'n_clicks'),
-    State('splitbox-file-selector', 'value'),
-    prevent_initial_call=True,
-)
-def run_analyze(n_clicks, file_key):
-    if not file_key or n_clicks <= 0:
-        return html.Div('Please select a file and click Analyze.'), False
-
-    try:
-        url = 'http://splitbox-api-prod:8888/analyze'
-        params = {'path': f's3://splitbox-bucket/{file_key}'}
-
-        # Define where results should go in S3 (same folder as input, inside /analysis/)
-        output_path = f's3://splitbox-bucket/outputs/{file_key}/analysis/'
-
-        params = {
-            'path': f's3://splitbox-bucket/{file_key}',  # input file
-            'output_path': output_path,  # where analysis results will be saved
-        }
-
-        resp = requests.get(url, params=params, timeout=300)
-        if resp.status_code != 200:
-            return html.Div(f'❌ Error {resp.status_code}: {resp.text}'), False
-
-        data = resp.json()
-        json_file = data.get(
-            'plot_file'
-        )  # e.g. "s3://splitbox-bucket/analysis/file1.json"
-        if not json_file:
-            return html.Div('⚠️ No plot file returned.'), False
-
-        # Extract bucket and key from s3:// path
-        bucket = json_file.split('/')[2]
-        key = '/'.join(json_file.split('/')[3:])
-        client = get_s3_client(bucket)
-        s3_resp = client.get_object(Bucket=bucket, Key=key)
-        plot_json = s3_resp['Body'].read().decode('utf-8')
-
-        fig = pio.from_json(plot_json)
-
-        return dcc.Graph(figure=fig, style={'width': '100%', 'height': '500px'}), False
-
-    except Exception as e:
-        return html.Div(f'⚠️ Error running analysis: {str(e)}'), False
 
 
 @callback(
@@ -853,3 +822,80 @@ def master_file_callback(
         file_options,
         file_value,
     )
+
+
+@callback(
+    Output('splitbox-analysis-results', 'children'),
+    Output('run-analyze-btn', 'disabled'),
+    Input('splitbox-file-selector', 'value'),
+    Input('run-analyze-btn', 'n_clicks'),
+)
+def show_or_run_analysis(file_key, n_clicks):
+    client = get_s3_client('splitbox-bucket')
+    username = get_current_username(session)
+
+    if not file_key:
+        return html.Div('Please select a file.'), False
+
+    triggered = ctx.triggered
+    triggered_id = triggered[0]['prop_id'].split('.')[0] if triggered else None
+
+    # --- Show existing analysis when file is selected ---
+    if triggered_id == 'splitbox-file-selector':
+        if s3_viz_exists(client, 'splitbox-bucket', file_key, username=username):
+            viz_key = get_viz_file_key(file_key, username=username)
+            preview_component, *_ = render_file_preview(
+                client,
+                bucket_name='splitbox-bucket',
+                file_key=viz_key,
+                show_download=True,
+                show_delete=True,
+                allow_rename=False,
+            )
+            return preview_component, False
+        else:
+            return (
+                html.Div(
+                    '⚠️ No analysis done yet. Click the button to generate one.',
+                    style={'padding': '20px', 'color': '#666', 'textAlign': 'center'},
+                ),
+                False,
+            )
+
+    # --- Run analysis if button clicked ---
+    elif triggered_id == 'run-analyze-btn' and n_clicks > 0:
+        try:
+            output_path = (
+                f's3://splitbox-bucket/{username}/outputs/{file_key}/analysis/'
+            )
+            resp = requests.get(
+                'http://splitbox-api-prod:8888/analyze',
+                params={
+                    'path': f's3://splitbox-bucket/{file_key}',
+                    'output_path': output_path,
+                },
+                timeout=300,
+            )
+            if resp.status_code != 200:
+                return html.Div(f'❌ Error {resp.status_code}: {resp.text}'), False
+
+            data = resp.json()
+            plot_file = data.get('plot_file')
+            if not plot_file:
+                return html.Div('⚠️ No plot file returned.'), False
+
+            bucket = plot_file.split('/')[2]
+            key = '/'.join(plot_file.split('/')[3:])
+            preview_component, *_ = render_file_preview(
+                client,
+                bucket_name=bucket,
+                file_key=key,
+                show_download=True,
+                show_delete=True,
+                allow_rename=False,
+            )
+            return preview_component, False
+        except Exception as e:
+            return html.Div(f'⚠️ Error running analysis: {str(e)}'), False
+
+    return html.Div('⚠️ Unexpected state'), False
