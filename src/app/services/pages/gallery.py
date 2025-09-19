@@ -331,20 +331,12 @@ def populate_gallery_bucket_dropdown(pathname):
 
 
 @callback(
-    Output('gallery-folder-dropdown', 'options'),
-    Input('gallery-bucket-selector', 'value'),
-)
-def refresh_folder_options(gallery_bucket):
-    folders = list_s3_folders(get_s3_client(gallery_bucket), gallery_bucket)
-    options = [{'label': f or '(root)', 'value': f} for f in folders]
-    return options
-
-
-@callback(
     Output('bucket-gallery-container', 'children'),
     Output('delete-status', 'children'),
+    Output('gallery-folder-dropdown', 'options'),
     Input('confirm-upload-btn', 'n_clicks'),
     Input({'type': 'delete-file-btn', 'file_key': ALL}, 'n_clicks'),
+    Input({'type': 'rename-file-btn', 'file_key': ALL}, 'n_clicks'),
     State('gallery-upload-files', 'contents'),
     State('gallery-upload-files', 'filename'),
     State({'type': 'rename-file', 'index': ALL}, 'value'),
@@ -352,11 +344,14 @@ def refresh_folder_options(gallery_bucket):
     State('gallery-new-folder-input', 'value'),
     Input('gallery-bucket-selector', 'value'),
     Input('type-dropdown', 'value'),
+    State({'type': 'rename-file-input', 'file_key': ALL}, 'value'),
+    State({'type': 'move-folder-input', 'file_key': ALL}, 'value'),
     prevent_initial_call=True,
 )
 def manage_gallery(
     n_upload,
     delete_clicks,
+    rename_clicks,
     upload_contents,
     original_filenames,
     renamed_filenames,
@@ -364,13 +359,14 @@ def manage_gallery(
     new_folder_name,
     bucket_name,
     file_type,
+    rename_inputs,
+    move_inputs,
 ):
     triggered = ctx.triggered_id
     delete_status = ''
-
     client = get_s3_client(bucket_name)
 
-    # --- Handle deletion ---
+    # --- Handle delete ---
     if isinstance(triggered, dict) and triggered.get('type') == 'delete-file-btn':
         file_key = triggered['file_key']
         delete_file_from_s3(client, bucket_name, file_key)
@@ -385,21 +381,44 @@ def manage_gallery(
                 for orig, new in zip(original_filenames, renamed_filenames)
             ]
 
-        target_folder = None
-        if new_folder_name and new_folder_name.strip():
-            target_folder = new_folder_name.strip()
-        elif folder:  # selected folder from dropdown
-            target_folder = folder
-        else:
-            target_folder = ''  # fallback to root
-
-        _, _, _ = upload_files_to_s3(
-            client,
-            bucket_name,
-            upload_contents,
-            filenames_to_upload,
-            target_folder,
+        target_folder = new_folder_name.strip() if new_folder_name else folder or ''
+        upload_files_to_s3(
+            client, bucket_name, upload_contents, filenames_to_upload, target_folder
         )
+
+    # --- Handle rename/move ---
+    elif isinstance(triggered, dict) and triggered.get('type') == 'rename-file-btn':
+        file_key = triggered['file_key']
+        idx = [
+            i
+            for i, f in enumerate(ctx.inputs_list[2])
+            if f['id']['file_key'] == file_key
+        ][0]
+
+        new_name = rename_inputs[idx] if rename_inputs else None
+        new_folder = move_inputs[idx] if move_inputs else folder or ''
+
+        if new_name:
+            ext = os.path.splitext(file_key)[1]
+            base_folder = (
+                new_folder.strip() if new_folder else os.path.dirname(file_key)
+            )
+            new_key = (
+                f'{base_folder}/{new_name}{ext}' if base_folder else f'{new_name}{ext}'
+            )
+
+            # Copy to new key, then delete old
+            client.copy_object(
+                Bucket=bucket_name,
+                CopySource={'Bucket': bucket_name, 'Key': file_key},
+                Key=new_key,
+            )
+            client.delete_object(Bucket=bucket_name, Key=file_key)
+            delete_status = f'Renamed/moved {file_key} → {new_key}'
+
+    # --- Refresh folder dropdown ---
+    folders = list_s3_folders(client, bucket_name)
+    folder_options = [{'label': f or '(root)', 'value': f} for f in folders]
 
     # --- Refresh gallery ---
     all_files = list_all_files(client, bucket_name, folder)
@@ -408,7 +427,7 @@ def manage_gallery(
         client, bucket_name, filtered_files, show_delete=True
     )
 
-    return gallery_div, delete_status
+    return gallery_div, delete_status, folder_options
 
 
 @callback(
@@ -471,7 +490,7 @@ def show_default_gallery(_):
     all_files = list_all_files(get_s3_client(bucket_name), bucket_name, folder)
     filtered_files = filter_files_by_type(all_files, file_type)
     gallery_div = build_gallery_layout(
-        get_s3_client(bucket_name), bucket_name, filtered_files
+        get_s3_client(bucket_name), bucket_name, filtered_files, allow_rename=False
     )
     return gallery_div
 
@@ -538,3 +557,18 @@ dash_clientside_callback(
     State('gallery-upload-files', 'contents'),
     State('gallery-upload-files', 'filename'),
 )
+
+
+@callback(
+    Output({'type': 'rename-section', 'file_key': ALL}, 'style'),
+    Input({'type': 'show-rename-btn', 'file_key': ALL}, 'n_clicks'),
+)
+def toggle_rename_sections(show_clicks):
+    """Show/hide rename section per file."""
+    styles = []
+    for clicks in show_clicks:
+        if clicks and clicks > 0:
+            styles.append({'display': 'block', 'marginTop': '5px'})
+        else:
+            styles.append({'display': 'none'})
+    return styles

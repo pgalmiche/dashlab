@@ -27,8 +27,9 @@ from datetime import datetime
 from typing import List, Optional, Union
 
 import boto3
+import dash_bootstrap_components as dbc
 from botocore.exceptions import BotoCoreError, ClientError
-from dash import html
+from dash import dcc, html
 from pymongo import MongoClient
 from pymongo.errors import ServerSelectionTimeoutError
 
@@ -332,112 +333,156 @@ def render_file_preview(
     file_key: str,
     show_download: bool = True,
     show_delete: bool = False,
-) -> tuple[html.Div, str, Optional[str], str]:
+    allow_rename: bool = True,  # new parameter
+):
     """
-    Returns the display component, tags, folder name, and default new-folder value
-    for a selected file in S3.
-
-    :param show_download: Whether to display the download button
-    :param show_delete: Whether to display the delete button
+    Render a professional and responsive file preview with optional rename/move.
+    Download/Delete buttons on top line, Rename/Move below (optional).
     """
     file_url = generate_presigned_url(s3_client, bucket_name, file_key)
 
-    # Determine file type and render appropriately
+    # --- Determine preview component ---
     if is_image(file_key):
-        main_component = html.Img(src=file_url, style={'maxWidth': '100%'})
+        main_component = html.Img(
+            src=file_url,
+            style={'width': '100%', 'height': 'auto', 'borderRadius': '6px'},
+        )
     elif is_pdf(file_key):
         main_component = html.Iframe(
-            src=file_url, style={'width': '100%', 'height': '400px'}
+            src=file_url,
+            style={
+                'width': '100%',
+                'height': '400px',
+                'borderRadius': '6px',
+                'border': '1px solid #ddd',
+            },
         )
     elif is_audio(file_key):
         main_component = html.Audio(
-            src=file_url,
-            controls=True,
-            style={
-                'width': '300px',
-                'maxWidth': '100%',
-                'display': 'block',
-                'marginBottom': '10px',
-            },
+            src=file_url, controls=True, style={'width': '100%'}
         )
-    elif is_raw_text(file_key):
-        try:
-            response = s3_client.get_object(Bucket=bucket_name, Key=file_key)
-            text = response['Body'].read().decode('utf-8')
-            main_component = html.Pre(text, style={'whiteSpace': 'pre-wrap'})
-        except Exception as e:
-            logger.error(f'Error reading text file {file_key}: {e}')
-            main_component = html.Div('Could not read file contents.')
     elif is_video(file_key):
         main_component = html.Video(
             src=file_url,
             controls=True,
-            style={
-                'width': '100%',
-                'maxWidth': '600px',
-                'display': 'block',
-                'marginBottom': '10px',
-            },
+            style={'width': '100%', 'height': 'auto', 'borderRadius': '6px'},
         )
     else:
-        main_component = html.Div('Preview not available.')
-
-    # Fetch tags and folder from database
-    collection = get_collection()
-    metadata = (
-        collection.find_one({'file_path': {'$regex': f'{file_key}$'}})
-        if collection is not None
-        else None
-    )
-    tags = ', '.join(metadata.get('tags', [])) if metadata else ''
-    folder_name = (
-        metadata.get('folder')
-        if metadata and 'folder' in metadata
-        else ('/'.join(file_key.split('/')[:-1]) if '/' in file_key else '')
-    )
-
-    # Conditionally render buttons based on function args
-    actions = []
-    if show_download:
-        download_link = html.A(
-            html.Button(
-                '⬇',
-                style={
-                    'color': 'green',
-                    'background': 'transparent',
-                    'border': 'none',
-                    'cursor': 'pointer',
-                    'fontSize': '20px',
-                },
-                title='Download file',
-            ),
-            href=file_url,
-            target='_blank',
-        )
-        actions.append(download_link)
-
-    if show_delete:
-        delete_button = html.Button(
-            '❌',
-            id={'type': 'delete-file-btn', 'file_key': file_key},
-            n_clicks=0,
+        main_component = html.Div(
+            'Preview not available',
             style={
-                'color': 'red',
-                'background': 'transparent',
-                'border': 'none',
-                'cursor': 'pointer',
-                'fontSize': '20px',
+                'padding': '20px',
+                'backgroundColor': '#f8f9fa',
+                'textAlign': 'center',
+                'borderRadius': '6px',
             },
-            title='Delete this file',
         )
-        actions.append(delete_button)
 
-    display_component = html.Div(
-        [main_component] + actions,
-        style={'marginTop': '10px'} if actions else main_component,
+    # --- Top line: Download + Delete ---
+    top_buttons = []
+    if show_download:
+        top_buttons.append(
+            dbc.Button(
+                '⬇ Download',
+                href=file_url,
+                target='_blank',
+                color='success',
+                size='sm',
+                className='me-2 flex-grow-1',
+            )
+        )
+    if show_delete:
+        top_buttons.append(
+            dbc.Button(
+                '❌ Delete',
+                id={'type': 'delete-file-btn', 'file_key': file_key},
+                n_clicks=0,
+                color='danger',
+                size='sm',
+                className='flex-grow-1',
+            )
+        )
+
+    components = [
+        main_component,
+        html.Div(top_buttons, className='d-flex flex-wrap mt-2'),
+    ]
+
+    # --- Rename / Move button and section ---
+    if allow_rename:
+        edit_button = dbc.Button(
+            '✏ Rename / Move',
+            id={'type': 'show-rename-btn', 'file_key': file_key},
+            n_clicks=0,
+            color='primary',
+            size='sm',
+            className='mt-2 w-100',
+        )
+
+        rename_section = html.Div(
+            id={'type': 'rename-section', 'file_key': file_key},
+            style={'display': 'none', 'marginTop': '10px'},
+            children=[
+                dbc.Row(
+                    dbc.Col(
+                        dcc.Input(
+                            id={'type': 'rename-file-input', 'file_key': file_key},
+                            type='text',
+                            placeholder='New name (keep extension)',
+                            style={'width': '100%', 'marginBottom': '5px'},
+                        ),
+                        width=12,
+                    ),
+                    className='mb-2',
+                ),
+                dbc.Row(
+                    dbc.Col(
+                        dcc.Input(
+                            id={'type': 'move-folder-input', 'file_key': file_key},
+                            type='text',
+                            placeholder='Target folder (optional)',
+                            style={'width': '100%', 'marginBottom': '5px'},
+                        ),
+                        width=12,
+                    ),
+                    className='mb-2',
+                ),
+                dbc.Row(
+                    dbc.Col(
+                        dbc.Button(
+                            '💾 Save',
+                            id={'type': 'rename-file-btn', 'file_key': file_key},
+                            n_clicks=0,
+                            color='warning',
+                            size='sm',
+                            style={'width': '100%'},
+                        ),
+                        width=12,
+                    ),
+                ),
+            ],
+        )
+
+        components.extend([edit_button, rename_section])
+
+    # --- Wrap everything in a responsive container ---
+    return (
+        html.Div(
+            components,
+            style={
+                'margin': '10px 0',
+                'padding': '10px',
+                'border': '1px solid #ddd',
+                'borderRadius': '8px',
+                'backgroundColor': '#ffffff',
+                'width': '100%',
+                'maxWidth': '100%',
+            },
+        ),
+        '',
+        '',
+        '',
     )
-
-    return display_component, tags, folder_name or None, ''
 
 
 def move_file_and_update_metadata(
@@ -704,12 +749,8 @@ def build_gallery_layout(
     file_keys: list[str],
     show_download=True,
     show_delete=False,
+    allow_rename=True,
 ) -> html.Div:
-    """
-    Build a responsive gallery layout for S3 files.
-
-    Each file is displayed in a card with preview, filename, tags, and download link.
-    """
     gallery_items = []
 
     for key in file_keys:
@@ -719,11 +760,11 @@ def build_gallery_layout(
             key,
             show_delete=show_delete,
             show_download=show_download,
+            allow_rename=allow_rename,
         )
 
         filename = key.split('/')[-1]
 
-        # Wrap each file in a card
         item_div = html.Div(
             [
                 display_component,
@@ -736,35 +777,46 @@ def build_gallery_layout(
                         'overflow': 'hidden',
                         'textOverflow': 'ellipsis',
                         'whiteSpace': 'nowrap',
-                        'maxWidth': '200px',
-                        'margin': 'auto',
+                        'width': '100%',
+                        'textAlign': 'center',
                     },
-                    title=filename,  # shows full name on hover
+                    title=filename,
                 ),
-                html.Div(tags_str, style={'fontStyle': 'italic', 'fontSize': '12px'}),
+                html.Div(
+                    tags_str,
+                    style={
+                        'fontStyle': 'italic',
+                        'fontSize': '12px',
+                        'textAlign': 'center',
+                    },
+                ),
             ],
             style={
                 'border': '1px solid #ddd',
                 'borderRadius': '8px',
-                'padding': '10px',
-                'width': '220px',
+                'padding': '15px',  # slightly larger padding
                 'boxSizing': 'border-box',
-                'textAlign': 'center',
                 'backgroundColor': '#fafafa',
                 'boxShadow': '2px 2px 5px rgba(0,0,0,0.1)',
+                'display': 'flex',
+                'flexDirection': 'column',
+                'alignItems': 'center',
+                'flex': '1 1 100%',  # full width on small screens
+                'maxWidth': '320px',  # slightly larger max width
+                'minWidth': '240px',  # slightly larger min width
             },
         )
 
         gallery_items.append(item_div)
 
-    # Flex container for gallery
     return html.Div(
         gallery_items,
         style={
             'display': 'flex',
             'flexWrap': 'wrap',
-            'gap': '15px',
-            'justifyContent': 'flex-start',
+            'gap': '20px',  # more space between cards
+            'justifyContent': 'center',
+            'width': '100%',
         },
     )
 
