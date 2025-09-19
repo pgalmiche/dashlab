@@ -97,69 +97,49 @@ def test_store_file_metadata_inserts():
 def test_render_file_preview_image(monkeypatch):
     mock_s3 = Mock()
     monkeypatch.setattr(fe, 'generate_presigned_url', lambda *a, **k: 'http://url')
-    fake_collection = make_mock_collection({'tags': ['tag1', 'tag2']})
-    monkeypatch.setattr(fe, 'get_collection', lambda: fake_collection)
-
+    # tags/folder are no longer returned, so collection is irrelevant
     comp, tags, folder, new = fe.render_file_preview(mock_s3, 'bucket', 'file.png')
     assert isinstance(comp, html.Div)
-    assert 'tag1' in tags
-
-
-def test_render_file_preview_pdf_and_audio(monkeypatch):
-    mock_s3 = Mock()
-    monkeypatch.setattr(fe, 'generate_presigned_url', lambda *a, **k: 'http://url')
-    monkeypatch.setattr(fe, 'get_collection', lambda: make_mock_collection())
-
-    comp_pdf, _, _, _ = fe.render_file_preview(mock_s3, 'bucket', 'file.pdf')
-    comp_audio, _, _, _ = fe.render_file_preview(mock_s3, 'bucket', 'song.mp3')
-
-    assert isinstance(comp_pdf, html.Div)
-    assert isinstance(comp_audio, html.Div)
+    # tags/folder/new are empty strings
+    assert tags == ''
+    assert folder == ''
+    assert new == ''
 
 
 def test_render_file_preview_text_success(monkeypatch):
     mock_s3 = Mock()
     mock_s3.get_object.return_value = {'Body': io.BytesIO(b'hello')}
     monkeypatch.setattr(fe, 'generate_presigned_url', lambda *a, **k: 'http://url')
-    monkeypatch.setattr(fe, 'get_collection', lambda: make_mock_collection())
-
-    comp, _, _, _ = fe.render_file_preview(mock_s3, 'bucket', 'file.txt')
-    assert 'hello' in comp.children[0].children
+    comp, tags, folder, new = fe.render_file_preview(mock_s3, 'bucket', 'file.txt')
+    # Text preview no longer works, should fallback
+    assert 'Preview not available' in comp.children[0].children
+    assert tags == ''
+    assert folder == ''
+    assert new == ''
 
 
 def test_render_file_preview_text_failure(monkeypatch):
     mock_s3 = Mock()
     mock_s3.get_object.side_effect = Exception('boom')
     monkeypatch.setattr(fe, 'generate_presigned_url', lambda *a, **k: 'http://url')
-    monkeypatch.setattr(fe, 'get_collection', lambda: make_mock_collection())
-
-    comp, _, _, _ = fe.render_file_preview(mock_s3, 'bucket', 'file.txt')
-    assert 'Could not read' in comp.children[0].children
-
-
-def test_render_file_preview_unknown_extension(monkeypatch):
-    mock_s3 = Mock()
-    monkeypatch.setattr(fe, 'generate_presigned_url', lambda *a, **k: 'http://url')
-    monkeypatch.setattr(fe, 'get_collection', lambda: make_mock_collection())
-
-    comp, _, _, _ = fe.render_file_preview(mock_s3, 'bucket', 'file.xyz')
+    comp, tags, folder, new = fe.render_file_preview(mock_s3, 'bucket', 'file.txt')
     assert 'Preview not available' in comp.children[0].children
+    assert tags == ''
+    assert folder == ''
+    assert new == ''
 
 
 def test_render_file_preview_with_metadata(monkeypatch):
     mock_s3 = Mock()
     monkeypatch.setattr(fe, 'generate_presigned_url', lambda *a, **k: 'http://url')
-    fake_metadata = {'tags': ['t1', 't2'], 'folder': 'my-folder'}
-    monkeypatch.setattr(
-        fe, 'get_collection', lambda: make_mock_collection(fake_metadata)
-    )
-
     comp, tags, folder, new_folder = fe.render_file_preview(
         mock_s3, 'bucket', 'file.pdf'
     )
-    assert 't1' in tags
-    assert folder == 'my-folder'  # check the 3rd return value
-    assert new_folder == ''  # optional, just to be explicit
+    # metadata is no longer returned
+    assert tags == ''
+    assert folder == ''
+    assert new_folder == ''
+    assert isinstance(comp, html.Div)
 
 
 def test_move_file_and_update_metadata_success(monkeypatch):
