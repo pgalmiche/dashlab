@@ -1,12 +1,11 @@
 import logging
-from typing import Optional
 from urllib.parse import urlparse
 
 import dash
 import dash_bootstrap_components as dbc
 import plotly.io as pio
 import requests
-from dash import ALL, callback, callback_context, ctx, dcc, html
+from dash import ALL, callback, ctx, dcc, html
 from dash.dependencies import Input, Output, State
 from flask import jsonify, request, session
 
@@ -17,6 +16,7 @@ from app.services.utils.file_utils import (
     get_current_username,
     get_s3_client,
     list_files_in_s3,
+    move_file_and_update_metadata,
     render_file_preview,
     s3_client,
     upload_files_to_s3,
@@ -449,31 +449,6 @@ def update_auth_banner(_):
     )
 
 
-@callback(
-    Output('splitbox-file-display', 'children'),
-    Input('splitbox-file-selector', 'value'),
-)
-def display_selected_file(file_key: Optional[str]):
-    if not file_key:
-        return html.Div('No file selected.'), '', None, ''
-
-    # Extract just the filename from the S3 key
-    filename = file_key.split('/')[-1]
-
-    display_component, _, _, _ = render_file_preview(
-        s3_client, 'splitbox-bucket', file_key, show_delete=True
-    )
-    return html.Div(
-        [
-            html.Div(
-                f'Selected file: {filename}',
-                style={'marginBottom': '10px'},
-            ),
-            display_component,
-        ]
-    )
-
-
 def render_audio_players_with_download(audio_urls):
     audio_divs = []
     for i, url in enumerate(audio_urls):
@@ -546,152 +521,6 @@ def run_splitbox(n_clicks, file_key):
 
     except Exception as e:
         return html.Div(f'⚠️ Error running SplitBox: {str(e)}'), False
-
-
-@callback(
-    Output('splitbox-upload-status', 'children'),
-    Output('splitbox-save-folder-selector', 'options'),
-    Output('splitbox-save-folder-selector', 'value'),
-    Output('splitbox-folder-selector', 'options'),
-    Output('splitbox-folder-selector', 'value'),
-    Output('splitbox-file-selector', 'options'),
-    Output('splitbox-file-selector', 'value'),
-    Input('splitbox-upload-file', 'contents'),
-    Input('splitbox-folder-selector', 'value'),  # folder change
-    Input('url', 'pathname'),  # page load trigger
-    Input('splitbox-uploaded-recording-key', 'data'),
-    State('splitbox-upload-file', 'filename'),
-    State('splitbox-save-folder-selector', 'value'),
-    State('splitbox-new-folder-name', 'value'),
-    State('splitbox-file-tags', 'value'),
-)
-def splitbox_main_callback(
-    file_content,
-    folder_trigger_value,
-    pathname,
-    uploaded_recording_key,
-    filename,
-    selected_save_folder,
-    new_folder_name,
-    file_tags,
-):
-    triggered_id = callback_context.triggered[0]['prop_id'].split('.')[0]
-    bucket_name = 'splitbox-bucket'
-    status_msg = ''
-
-    username = get_current_username(session)
-    folders = get_allowed_folders_for_user(session, s3_client, bucket_name)
-    folder_options = [
-        {
-            'label': (
-                f.replace(f'{username}/', '') if f.startswith(f'{username}/') else f
-            ),
-            'value': f,
-        }
-        for f in folders
-    ]
-
-    # --- Default selections ---
-    folder_value = (
-        folder_trigger_value
-        if folder_trigger_value is not None
-        else (folder_options[0]['value'] if folder_options else '')
-    )
-    save_folder_value = (
-        selected_save_folder
-        if selected_save_folder is not None
-        else (folder_options[0]['value'] if folder_options else '')
-    )
-
-    # --- Populate file dropdown for selected folder ---
-    file_options = []
-    file_value = None
-    if folder_value:
-        file_options = list_files_in_s3(s3_client, bucket_name, folder_value)
-        file_value = file_options[0]['value'] if file_options else None
-
-    # --- Handle mic recording upload ---
-    if triggered_id == 'splitbox-uploaded-recording-key' and uploaded_recording_key:
-        status_msg = f'🎤 Recording uploaded successfully: {uploaded_recording_key}'
-        # Put the recording in the dropdowns just like a file upload
-        folder_name = f'{username}/inputs'
-        if folder_name not in [o['value'] for o in folder_options]:
-            folder_options.append({'label': folder_name, 'value': folder_name})
-
-        folder_value = folder_name
-        save_folder_value = folder_name
-
-        file_options = list_files_in_s3(s3_client, bucket_name, folder_name)
-        file_value = next(
-            (f['value'] for f in file_options if f['value'].endswith(filename)), None
-        )
-
-    # --- Handle upload ---
-    if triggered_id == 'splitbox-upload-file' and file_content and filename:
-
-        if new_folder_name:
-            # Always create new folders in the user's namespace unless shared is selected
-            if selected_save_folder == 'shared/':
-                folder_name = f'shared/{new_folder_name.strip()}'
-            else:
-                folder_name = f'{username}/inputs/{new_folder_name.strip()}'
-        else:
-            # If no new folder, use the selected folder if allowed
-            folder_name = (
-                selected_save_folder if selected_save_folder else f'{username}/inputs/'
-            )
-
-        # --- Parse tags safely ---
-        tags_list = (
-            [tag.strip() for tag in file_tags.split(',') if tag.strip()]
-            if file_tags
-            else []
-        )
-
-        try:
-            _, _, uploaded_files = upload_files_to_s3(
-                s3_client,
-                bucket_name,
-                [file_content],
-                [filename],
-                folder_name,
-                tags_list,
-            )
-        except Exception as e:
-            return (
-                f'Error uploading file: {e}',
-                folder_options,
-                save_folder_value,
-                folder_options,
-                folder_value,
-                file_options,
-                file_value,
-            )
-
-        status_msg = f"File '{filename}' uploaded successfully to '{folder_name}'"
-
-        # --- Update folder dropdowns with new folder ---
-        if folder_name not in [o['value'] for o in folder_options]:
-            folder_options.append({'label': folder_name, 'value': folder_name})
-
-        folder_value = folder_name
-        save_folder_value = folder_name
-
-        # --- Refresh file dropdown with all files in that folder ---
-        file_options = list_files_in_s3(s3_client, bucket_name, folder_name)
-        file_value = next(
-            (f['value'] for f in file_options if f['label'] == filename), None
-        )
-
-    return (
-        status_msg,
-        folder_options,
-        save_folder_value,
-        folder_options,
-        folder_value,
-        file_options,
-        file_value,
-    )
 
 
 app = dash.get_app()
@@ -866,3 +695,161 @@ def run_analyze(n_clicks, file_key):
 
     except Exception as e:
         return html.Div(f'⚠️ Error running analysis: {str(e)}'), False
+
+
+@callback(
+    Output('splitbox-file-display', 'children'),
+    Output('splitbox-upload-status', 'children'),
+    Output('splitbox-save-folder-selector', 'options'),
+    Output('splitbox-save-folder-selector', 'value'),
+    Output('splitbox-folder-selector', 'options'),
+    Output('splitbox-folder-selector', 'value'),
+    Output('splitbox-file-selector', 'options'),
+    Output('splitbox-file-selector', 'value'),
+    Input('splitbox-upload-file', 'contents'),
+    Input('splitbox-folder-selector', 'value'),
+    Input('url', 'pathname'),
+    Input('splitbox-uploaded-recording-key', 'data'),
+    Input({'type': 'rename-file-btn', 'file_key': ALL}, 'n_clicks'),
+    Input('splitbox-file-selector', 'value'),
+    State('splitbox-upload-file', 'filename'),
+    State('splitbox-save-folder-selector', 'value'),
+    State('splitbox-new-folder-name', 'value'),
+    State('splitbox-file-tags', 'value'),
+    State({'type': 'rename-file-input', 'file_key': ALL}, 'value'),
+    State({'type': 'move-folder-input', 'file_key': ALL}, 'value'),
+)
+def master_file_callback(
+    upload_contents,
+    folder_selector_value,
+    pathname,
+    uploaded_recording_key,
+    rename_clicks,
+    selected_file,
+    upload_filename,
+    save_folder_value,
+    new_folder_name,
+    file_tags,
+    rename_new_names,
+    rename_target_folders,
+):
+    triggered = ctx.triggered_id
+    bucket_name = 'splitbox-bucket'
+    username = get_current_username(session)
+
+    status_msg = ''
+    updated_preview = html.Div('No file selected.')
+
+    # --- Get folders for dropdowns ---
+    folders = get_allowed_folders_for_user(session, s3_client, bucket_name)
+    folder_options = [
+        {
+            'label': (
+                f.replace(f'{username}/', '') if f.startswith(f'{username}/') else f
+            ),
+            'value': f,
+        }
+        for f in folders
+    ]
+    save_folder_value = save_folder_value or (
+        folder_options[0]['value'] if folder_options else ''
+    )
+    folder_value = folder_selector_value or save_folder_value
+
+    # --- Initialize file dropdown ---
+    file_options = list_files_in_s3(s3_client, bucket_name, folder_value)
+    file_value = (
+        selected_file
+        if selected_file
+        else (file_options[0]['value'] if file_options else None)
+    )
+
+    # --- Handle mic recording upload ---
+    if triggered == 'splitbox-uploaded-recording-key' and uploaded_recording_key:
+        status_msg = f'🎤 Recording uploaded successfully: {uploaded_recording_key}'
+        folder_name = f'{username}/inputs'
+        if folder_name not in [o['value'] for o in folder_options]:
+            folder_options.append({'label': folder_name, 'value': folder_name})
+        folder_value = save_folder_value = folder_name
+        file_options = list_files_in_s3(s3_client, bucket_name, folder_name)
+        file_value = uploaded_recording_key
+
+    # --- Handle file upload ---
+    elif triggered == 'splitbox-upload-file' and upload_contents and upload_filename:
+        if new_folder_name:
+            folder_name = (
+                f'shared/{new_folder_name.strip()}'
+                if save_folder_value == 'shared/'
+                else f'{username}/inputs/{new_folder_name.strip()}'
+            )
+        else:
+            folder_name = save_folder_value or f'{username}/inputs/'
+        tags_list = [tag.strip() for tag in (file_tags or '').split(',') if tag.strip()]
+        try:
+            _, _, uploaded_files = upload_files_to_s3(
+                s3_client,
+                bucket_name,
+                [upload_contents],
+                [upload_filename],
+                folder_name,
+                tags_list,
+            )
+            status_msg = (
+                f"File '{upload_filename}' uploaded successfully to '{folder_name}'"
+            )
+            if folder_name not in [o['value'] for o in folder_options]:
+                folder_options.append({'label': folder_name, 'value': folder_name})
+            folder_value = save_folder_value = folder_name
+            file_options = list_files_in_s3(s3_client, bucket_name, folder_name)
+            file_value = next(
+                (f['value'] for f in file_options if f['label'] == upload_filename),
+                None,
+            )
+        except Exception as e:
+            status_msg = f'Error uploading file: {e}'
+
+    # --- Handle file rename/move ---
+    elif isinstance(triggered, dict) and triggered.get('type') == 'rename-file-btn':
+        idx = [
+            i
+            for i, ck in enumerate(ctx.inputs_list[4])
+            if ck['id']['file_key'] == triggered['file_key']
+        ][0]
+        new_name = (
+            rename_new_names[idx]
+            if rename_new_names and rename_new_names[idx]
+            else None
+        )
+        target_folder = rename_target_folders[idx] if rename_target_folders else None
+        file_key_to_move = triggered['file_key']
+        result = move_file_and_update_metadata(
+            s3_client,
+            bucket_name,
+            file_key_to_move,
+            new_tags=file_tags,
+            target_folder=target_folder,
+            new_name=new_name,
+        )
+        status_msg = result
+
+    # --- Refresh files in current folder ---
+    file_options = list_files_in_s3(s3_client, bucket_name, folder_value)
+    file_value = file_value or (file_options[0]['value'] if file_options else None)
+
+    # --- Render file preview ---
+    if file_value:
+        display_component, _, _, _ = render_file_preview(
+            s3_client, bucket_name, file_value, show_delete=True
+        )
+        updated_preview = html.Div([display_component])
+
+    return (
+        updated_preview,
+        status_msg,
+        folder_options,
+        save_folder_value,
+        folder_options,
+        folder_value,
+        file_options,
+        file_value,
+    )
