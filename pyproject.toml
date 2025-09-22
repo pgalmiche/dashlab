@@ -22,6 +22,7 @@ dependencies = [
   "pydantic-settings",
   "beautifulsoup4",
   "requests",
+  "Pillow",
 ]
 
 [project.optional-dependencies]

@@ -29,9 +29,12 @@ from typing import List, Optional, Union
 
 import boto3
 import dash_bootstrap_components as dbc
+import plotly.graph_objects as go
 import requests
 from botocore.exceptions import BotoCoreError, ClientError
 from dash import dcc, html
+from PIL import ExifTags, Image
+from PIL.ExifTags import GPSTAGS, TAGS
 from pymongo import MongoClient
 from pymongo.errors import ServerSelectionTimeoutError
 
@@ -950,3 +953,196 @@ def list_viz_files(s3_client, bucket: str, file_key: str, username: str) -> list
     prefix = get_analysis_prefix(file_key, username)
     objs = s3_client.list_objects_v2(Bucket=bucket, Prefix=prefix).get('Contents', [])
     return [obj['Key'] for obj in objs if obj['Key'].endswith('_viz.json')]
+
+
+def get_exif_data(image_bytes):
+    """Extract EXIF metadata from an image."""
+    try:
+        img = Image.open(io.BytesIO(image_bytes))
+        exif_data = img._getexif() or {}
+        exif = {}
+        for tag_id, value in exif_data.items():
+            tag = TAGS.get(tag_id, tag_id)
+            exif[tag] = value
+        return exif
+    except Exception as e:
+        print(f'Error reading EXIF: {e}')
+        return {}
+
+
+def get_gps_from_exif(exif):
+    """Return GPS coordinates in decimal if available."""
+    if 'GPSInfo' not in exif:
+        return None, None
+
+    gps_info = exif['GPSInfo']
+    gps_data = {}
+    for t in gps_info:
+        sub_tag = GPSTAGS.get(t, t)
+        gps_data[sub_tag] = gps_info[t]
+
+    def convert_to_decimal(coord, ref):
+        """Convert GPS tuple to decimal degrees."""
+        degrees = coord[0][0] / coord[0][1]
+        minutes = coord[1][0] / coord[1][1]
+        seconds = coord[2][0] / coord[2][1]
+        dec = degrees + minutes / 60 + seconds / 3600
+        if ref in ['S', 'W']:
+            dec = -dec
+        return dec
+
+    lat = convert_to_decimal(gps_data['GPSLatitude'], gps_data['GPSLatitudeRef'])
+    lon = convert_to_decimal(gps_data['GPSLongitude'], gps_data['GPSLongitudeRef'])
+    return lat, lon
+
+
+def get_decimal_from_dms(dms, ref):
+    """Convert GPS coordinates in EXIF format to decimal degrees."""
+    degrees, minutes, seconds = dms
+    decimal = degrees + minutes / 60.0 + seconds / 3600.0
+    if ref in ['S', 'W']:
+        decimal = -decimal
+    return decimal
+
+
+def extract_lat_lon(gps_data):
+    """Extract decimal lat/lon from EXIF GPSInfo dict."""
+    try:
+        lat = get_decimal_from_dms(gps_data['GPSLatitude'], gps_data['GPSLatitudeRef'])
+        lon = get_decimal_from_dms(
+            gps_data['GPSLongitude'], gps_data['GPSLongitudeRef']
+        )
+        return lat, lon
+    except KeyError:
+        return None, None
+
+
+def get_images_with_gps(s3_client, bucket_name, file_keys):
+    """
+    Return a list of dicts with image URL and GPS coordinates (if available).
+    Only includes files with GPS metadata.
+    """
+    images_with_gps = []
+
+    for key in file_keys:
+        # Get S3 object
+        obj = s3_client.get_object(Bucket=bucket_name, Key=key)
+        img_bytes = obj['Body'].read()
+
+        # Open with PIL
+        img = Image.open(io.BytesIO(img_bytes))
+        exif_data = img._getexif() or {}
+
+        # Map EXIF tag names
+        exif = {ExifTags.TAGS.get(tag, tag): value for tag, value in exif_data.items()}
+
+        # Check GPS info
+        gps_info = exif.get('GPSInfo')
+        if not gps_info:
+            continue
+
+        def _convert_to_degrees(value):
+            """Convert GPS coordinates to float degrees."""
+            d, m, s = value
+            return float(d) + float(m) / 60 + float(s) / 3600
+
+        gps_tags = {ExifTags.GPSTAGS.get(t, t): v for t, v in gps_info.items()}
+
+        lat_ref = gps_tags.get('GPSLatitudeRef', 'N')
+        lon_ref = gps_tags.get('GPSLongitudeRef', 'E')
+        lat = _convert_to_degrees(gps_tags['GPSLatitude'])
+        lon = _convert_to_degrees(gps_tags['GPSLongitude'])
+
+        if lat_ref == 'S':
+            lat = -lat
+        if lon_ref == 'W':
+            lon = -lon
+
+        # Build public URL (assuming your S3 bucket is public or presigned URL)
+        url = s3_client.generate_presigned_url(
+            'get_object',
+            Params={'Bucket': bucket_name, 'Key': key},
+            ExpiresIn=3600,
+        )
+
+        images_with_gps.append(
+            {
+                'key': key,
+                'url': url,
+                'lat': float(lat),
+                'lon': float(lon),
+            }
+        )
+
+    return images_with_gps
+
+
+def build_gallery_map_with_gps(images_with_gps, selected_key=None):
+    if not images_with_gps:
+        return html.Div('No images with GPS data.')
+
+    images_with_coords = [
+        img for img in images_with_gps if 'lat' in img and 'lon' in img
+    ]
+    if not images_with_coords:
+        return html.Div('No images with GPS data.')
+
+    lats = [img['lat'] for img in images_with_coords]
+    lons = [img['lon'] for img in images_with_coords]
+    keys = [img['key'] for img in images_with_coords]
+    filenames = [k.split('/')[-1] for k in keys]
+
+    # Marker colors: green if selected, else blue
+    colors = ['green' if k == selected_key else 'blue' for k in keys]
+
+    fig = go.Figure(
+        go.Scattermapbox(
+            lat=lats,
+            lon=lons,
+            mode='markers',
+            marker=go.scattermapbox.Marker(size=14, color=colors),
+            hovertext=filenames,
+            hoverinfo='text',
+            customdata=[img.get('url') for img in images_with_coords],
+        )
+    )
+
+    fig.update_layout(
+        mapbox=dict(
+            style='open-street-map',
+            center=dict(lat=sum(lats) / len(lats), lon=sum(lons) / len(lons)),
+            zoom=3,
+        ),
+        margin={'r': 0, 't': 0, 'l': 0, 'b': 0},
+        hovermode='closest',
+    )
+
+    return html.Div(
+        style={
+            'display': 'flex',
+            'flexWrap': 'wrap',  # allow items to wrap on small screens
+            'gap': '20px',
+            'width': '100%',
+        },
+        children=[
+            dcc.Graph(
+                id='gallery-map',
+                figure=fig,
+                style={
+                    'flex': '2 1 400px',  # grow/shrink, base width 400px
+                    'minWidth': '300px',
+                },
+            ),
+            html.Div(
+                id='map-image-preview',
+                style={
+                    'flex': '1 1 300px',  # grow/shrink, base width 300px
+                    'minWidth': '200px',
+                    'display': 'flex',
+                    'alignItems': 'center',
+                    'justifyContent': 'center',
+                },
+                children='Click a marker to preview the image.',
+            ),
+        ],
+    )

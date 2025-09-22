@@ -1,4 +1,5 @@
 import logging
+import time
 from urllib.parse import urlparse
 
 import dash
@@ -342,6 +343,12 @@ def update_auth_banner(_):
                                                                     'marginBottom': '30px',
                                                                 }
                                                             ),
+                                                            dcc.Store(
+                                                                id='splitbox-refresh-files'
+                                                            ),
+                                                            dcc.Store(
+                                                                id='splitbox-refresh-recordings'
+                                                            ),
                                                             html.H3(
                                                                 '📂 Selected File Preview:',
                                                                 className='fw-bold mb-3',
@@ -597,9 +604,9 @@ async function(startClicks, stopClicks, filenameInput, usernameInput) {
                     if (!uploadResp.ok) throw new Error(`Upload failed: ${uploadResp.status}`);
 
                     // Return both status message and uploaded file key
-                    resolve(["✅ Recording uploaded successfully!", saveKey]);
+                    resolve(["✅ Recording uploaded successfully!", saveKey, Date.now()]);
                 } catch (err) {
-                    resolve(["❌ Upload failed: " + err.message, null]);
+                    resolve(["❌ Error: " + err.message, null]);
                 }
             };
             window.splitboxRecorder.stop();
@@ -612,6 +619,7 @@ async function(startClicks, stopClicks, filenameInput, usernameInput) {
     [
         Output('splitbox-recording-status', 'children'),
         Output('splitbox-uploaded-recording-key', 'data'),
+        Output('splitbox-refresh-recordings', 'data'),
     ],
     [
         Input('splitbox-start-recording', 'n_clicks'),
@@ -647,6 +655,7 @@ def splitbox_generate_presigned_upload():
 
 @callback(
     Output('splitbox-delete-file-status', 'children'),
+    Output('splitbox-refresh-files', 'data'),
     Input({'type': 'delete-file-btn', 'file_key': ALL}, 'n_clicks'),
     prevent_initial_call=True,
 )
@@ -663,7 +672,7 @@ def manage_deletions(delete_clicks):
             delete_file_from_s3(get_s3_client(bucket_name), bucket_name, file_key)
             delete_status = f'Deleted {file_key}'
 
-    return delete_status
+    return delete_status, time.time()
 
 
 @callback(
@@ -678,9 +687,11 @@ def manage_deletions(delete_clicks):
     Input('splitbox-upload-file', 'contents'),
     Input('splitbox-folder-selector', 'value'),
     Input('url', 'pathname'),
-    Input('splitbox-uploaded-recording-key', 'data'),
+    Input('splitbox-uploaded-recording-key', 'data'),  # <-- new recording key
     Input({'type': 'rename-file-btn', 'file_key': ALL}, 'n_clicks'),
     Input('splitbox-file-selector', 'value'),
+    Input('splitbox-refresh-files', 'data'),
+    Input('splitbox-refresh-recordings', 'data'),
     State('splitbox-upload-file', 'filename'),
     State('splitbox-save-folder-selector', 'value'),
     State('splitbox-new-folder-name', 'value'),
@@ -692,9 +703,11 @@ def master_file_callback(
     upload_contents,
     folder_selector_value,
     pathname,
-    uploaded_recording_key,
+    uploaded_recording_key,  # ✅ use this consistently
     rename_clicks,
     selected_file,
+    refresher_files,
+    refresher_recordings,
     upload_filename,
     save_folder_value,
     new_folder_name,
@@ -709,7 +722,7 @@ def master_file_callback(
     status_msg = ''
     updated_preview = html.Div('No file selected.')
 
-    # --- Get folders for dropdowns ---
+    # --- Folder dropdowns ---
     folders = get_allowed_folders_for_user(session, s3_client, bucket_name)
     folder_options = [
         {
@@ -727,13 +740,9 @@ def master_file_callback(
 
     # --- Initialize file dropdown ---
     file_options = list_files_in_s3(s3_client, bucket_name, folder_value)
-    file_value = (
-        selected_file
-        if selected_file
-        else (file_options[0]['value'] if file_options else None)
-    )
+    file_value = selected_file or (file_options[0]['value'] if file_options else None)
 
-    # --- Handle mic recording upload ---
+    # === Handle mic recording upload ===
     if triggered == 'splitbox-uploaded-recording-key' and uploaded_recording_key:
         status_msg = f'🎤 Recording uploaded successfully: {uploaded_recording_key}'
         folder_name = f'{username}/inputs'
@@ -741,9 +750,8 @@ def master_file_callback(
             folder_options.append({'label': folder_name, 'value': folder_name})
         folder_value = save_folder_value = folder_name
         file_options = list_files_in_s3(s3_client, bucket_name, folder_name)
-        file_value = uploaded_recording_key
 
-    # --- Handle file upload ---
+    # === Handle regular file upload ===
     elif triggered == 'splitbox-upload-file' and upload_contents and upload_filename:
         if new_folder_name:
             folder_name = (
@@ -777,7 +785,7 @@ def master_file_callback(
         except Exception as e:
             status_msg = f'Error uploading file: {e}'
 
-    # --- Handle file rename/move ---
+    # === Handle rename/move ===
     elif isinstance(triggered, dict) and triggered.get('type') == 'rename-file-btn':
         idx = [
             i
@@ -791,7 +799,7 @@ def master_file_callback(
         )
         target_folder = rename_target_folders[idx] if rename_target_folders else None
         file_key_to_move = triggered['file_key']
-        result = move_file_and_update_metadata(
+        status_msg = move_file_and_update_metadata(
             s3_client,
             bucket_name,
             file_key_to_move,
@@ -799,13 +807,18 @@ def master_file_callback(
             target_folder=target_folder,
             new_name=new_name,
         )
-        status_msg = result
 
-    # --- Refresh files in current folder ---
+    # Refresh list to ensure latest files are visible
     file_options = list_files_in_s3(s3_client, bucket_name, folder_value)
     file_value = file_value or (file_options[0]['value'] if file_options else None)
 
-    # --- Render file preview ---
+    if uploaded_recording_key:
+        status_msg = f'🎤 Recording uploaded successfully: {uploaded_recording_key}'
+        folder_value = save_folder_value = f'{username}/inputs/recorded'
+        file_options = list_files_in_s3(s3_client, bucket_name, folder_value)
+        file_value = uploaded_recording_key
+
+    # --- Render preview if file is selected ---
     if file_value:
         display_component, _, _, _ = render_file_preview(
             s3_client, bucket_name, file_value, show_delete=True
@@ -820,7 +833,7 @@ def master_file_callback(
         folder_options,
         folder_value,
         file_options,
-        file_value,
+        file_value,  # ✅ ensures the new recording is pre-selected
     )
 
 

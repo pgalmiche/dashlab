@@ -3,15 +3,16 @@ import os
 
 import dash
 import dash_bootstrap_components as dbc
-from dash import ALL, callback, ctx, dcc, html
-from dash.dependencies import Input, Output, State
+from dash import ALL, Input, Output, State, callback, ctx, dcc, html
 from dash.exceptions import PreventUpdate
 from flask import session
 
 from app.services.utils.file_utils import (
     build_gallery_layout,
+    build_gallery_map_with_gps,
     delete_file_from_s3,
     filter_files_by_type,
+    get_images_with_gps,
     get_s3_client,
     list_all_files,
     list_s3_folders,
@@ -427,7 +428,14 @@ def manage_gallery(
         client, bucket_name, filtered_files, show_delete=True
     )
 
-    return gallery_div, delete_status, folder_options
+    # --- Get images with GPS ---
+    images_with_gps = get_images_with_gps(client, bucket_name, filtered_files)
+
+    # --- Build map below gallery ---
+    map_div = build_gallery_map_with_gps(images_with_gps)
+
+    # --- Return combined layout ---
+    return html.Div([map_div, html.Hr(), gallery_div]), delete_status, folder_options
 
 
 @callback(
@@ -492,7 +500,16 @@ def show_default_gallery(_):
     gallery_div = build_gallery_layout(
         get_s3_client(bucket_name), bucket_name, filtered_files, allow_rename=False
     )
-    return gallery_div
+
+    client = get_s3_client(bucket_name)
+    # --- Get images with GPS ---
+    images_with_gps = get_images_with_gps(client, bucket_name, filtered_files)
+
+    # --- Build map below gallery ---
+    map_div = build_gallery_map_with_gps(images_with_gps)
+
+    # --- Return combined layout ---
+    return html.Div([map_div, html.Hr(), gallery_div])
 
 
 @callback(
@@ -572,3 +589,49 @@ def toggle_rename_sections(show_clicks):
         else:
             styles.append({'display': 'none'})
     return styles
+
+
+@callback(
+    Output('map-image-preview', 'children'),
+    Output('gallery-map', 'figure'),
+    Input('gallery-map', 'clickData'),
+    State('gallery-map', 'figure'),
+)
+def update_selected_marker(clickData, fig):
+    if not clickData:
+        return (
+            html.Div('Click a marker to preview the image.', style={'padding': '10px'}),
+            fig,
+        )
+
+    selected_index = clickData['points'][0]['pointIndex']
+    url = clickData['points'][0]['customdata']
+    filename = clickData['points'][0]['hovertext']
+
+    # Update marker colors
+    num_points = len(fig['data'][0]['lat'])
+    fig['data'][0]['marker']['color'] = [
+        'green' if i == selected_index else 'blue' for i in range(num_points)
+    ]
+
+    preview_div = html.Div(
+        [
+            html.Img(
+                src=url,
+                style={'width': '100%', 'height': 'auto', 'borderRadius': '6px'},
+            ),
+            html.Div(
+                filename,
+                style={
+                    'fontWeight': 'bold',
+                    'marginTop': '5px',
+                    'textAlign': 'center',
+                    'overflow': 'hidden',
+                    'textOverflow': 'ellipsis',
+                    'whiteSpace': 'nowrap',
+                },
+            ),
+        ]
+    )
+
+    return preview_div, fig
