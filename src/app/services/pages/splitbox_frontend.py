@@ -5,21 +5,21 @@ import dash
 import dash_bootstrap_components as dbc
 import requests
 from dash import ALL, callback, ctx, dcc, html
-from dash.dependencies import Input, Output, State
+from dash.dependencies import MATCH, Input, Output, State
 from flask import jsonify, request, session
 
 from app.services.utils.file_utils import (
     card_style,
     delete_file_from_s3,
     get_allowed_folders_for_user,
+    get_analysis_prefix,
     get_current_username,
     get_s3_client,
-    get_viz_file_key,
     list_files_in_s3,
+    list_viz_files,
     move_file_and_update_metadata,
     render_file_preview,
     s3_client,
-    s3_viz_exists,
     upload_files_to_s3,
 )
 from config.logging import setup_logging
@@ -837,22 +837,26 @@ def show_or_run_analysis(file_key, n_clicks):
     if not file_key:
         return html.Div('Please select a file.'), False
 
-    triggered = ctx.triggered
-    triggered_id = triggered[0]['prop_id'].split('.')[0] if triggered else None
+    triggered_id = ctx.triggered[0]['prop_id'].split('.')[0] if ctx.triggered else None
 
     # --- Show existing analysis when file is selected ---
     if triggered_id == 'splitbox-file-selector':
-        if s3_viz_exists(client, 'splitbox-bucket', file_key, username=username):
-            viz_key = get_viz_file_key(file_key, username=username)
-            preview_component, *_ = render_file_preview(
-                client,
-                bucket_name='splitbox-bucket',
-                file_key=viz_key,
-                show_download=True,
-                show_delete=True,
-                allow_rename=False,
-            )
-            return preview_component, False
+        # ✅ Use the utility to compute the analysis prefix
+        viz_keys = list_viz_files(client, 'splitbox-bucket', file_key, username)
+
+        if viz_keys:
+            previews = []
+            for viz_key in viz_keys:
+                component, *_ = render_file_preview(
+                    client,
+                    bucket_name='splitbox-bucket',
+                    file_key=viz_key,
+                    show_download=True,
+                    show_delete=True,
+                    allow_rename=False,
+                )
+                previews.append(component)
+            return html.Div(previews), False
         else:
             return (
                 html.Div(
@@ -865,9 +869,10 @@ def show_or_run_analysis(file_key, n_clicks):
     # --- Run analysis if button clicked ---
     elif triggered_id == 'run-analyze-btn' and n_clicks > 0:
         try:
-            output_path = (
-                f's3://splitbox-bucket/{username}/outputs/{file_key}/analysis/'
-            )
+            # ✅ Compute output path using the same utility
+            prefix = get_analysis_prefix(file_key, username)
+            output_path = f's3://splitbox-bucket/{prefix}'
+
             resp = requests.get(
                 'http://splitbox-api-prod:8888/analyze',
                 params={
@@ -879,23 +884,61 @@ def show_or_run_analysis(file_key, n_clicks):
             if resp.status_code != 200:
                 return html.Div(f'❌ Error {resp.status_code}: {resp.text}'), False
 
-            data = resp.json()
-            plot_file = data.get('plot_file')
-            if not plot_file:
-                return html.Div('⚠️ No plot file returned.'), False
-
-            bucket = plot_file.split('/')[2]
-            key = '/'.join(plot_file.split('/')[3:])
-            preview_component, *_ = render_file_preview(
-                client,
-                bucket_name=bucket,
-                file_key=key,
-                show_download=True,
-                show_delete=True,
-                allow_rename=False,
+            # ✅ Just trigger a fresh S3 listing instead of looking for plot_file
+            viz_keys = list_viz_files(
+                client, 'splitbox-bucket', file_key, username=username
             )
-            return preview_component, False
+
+            previews = []
+            for viz_key in viz_keys:
+                comp, *_ = render_file_preview(
+                    client,
+                    bucket_name='splitbox-bucket',
+                    file_key=viz_key,
+                    show_download=True,
+                    show_delete=True,
+                    allow_rename=False,
+                )
+                previews.append(comp)
+
+            if not previews:
+                return (
+                    html.Div('⚠️ Analysis finished but no viz files found yet.'),
+                    False,
+                )
+
+            return html.Div(previews), False
+
         except Exception as e:
             return html.Div(f'⚠️ Error running analysis: {str(e)}'), False
 
     return html.Div('⚠️ Unexpected state'), False
+
+
+app.clientside_callback(
+    """
+    function(json_url, store_id) {
+        if (!json_url || !store_id) return window.dash_clientside.no_update;
+
+        const containerId = 'viz-' + store_id.file_key.replace(/\\//g,'-');
+        const container = document.getElementById(containerId);
+        if (!container) return window.dash_clientside.no_update;
+
+        fetch(json_url)
+            .then(response => response.json())
+            .then(fig => {
+                if (!window.Plotly) {
+                    console.error("Plotly not loaded!");
+                    return;
+                }
+                Plotly.react(container, fig.data, fig.layout);
+            })
+            .catch(err => console.error("Error rendering viz JSON:", err));
+
+        return window.dash_clientside.no_update;
+    }
+    """,
+    Output({'type': 'viz-json-store', 'file_key': MATCH}, 'data'),
+    Input({'type': 'viz-json-store', 'file_key': MATCH}, 'data'),
+    State({'type': 'viz-json-store', 'file_key': MATCH}, 'id'),
+)

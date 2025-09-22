@@ -188,7 +188,8 @@ app = Dash(
     suppress_callback_exceptions=True,
     external_stylesheets=external_css,
     external_scripts=[
-        'https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js'
+        'https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js',
+        'https://cdn.plot.ly/plotly-latest.min.js',
     ],
     server=server,
     url_base_pathname='/',

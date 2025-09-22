@@ -29,7 +29,7 @@ from typing import List, Optional, Union
 
 import boto3
 import dash_bootstrap_components as dbc
-import plotly.io as pio
+import requests
 from botocore.exceptions import BotoCoreError, ClientError
 from dash import dcc, html
 from pymongo import MongoClient
@@ -273,7 +273,6 @@ def generate_presigned_url(
             'Key': object_key,
         }
 
-        # If MIME type is known and displayable, set headers to inline
         if mime_type:
             params['ResponseContentDisposition'] = 'inline'
             params['ResponseContentType'] = mime_type
@@ -329,17 +328,48 @@ def store_file_metadata(file_path: str, tags: List[str]) -> None:
     collection.insert_one(file_entry)
 
 
+def render_viz_from_s3_json(file_url: str):
+    """
+    Fetch JSON from S3 and render as Dash Graphs server-side.
+    Returns a list of dcc.Graph components.
+    """
+    if not file_url:
+        return html.Div('No visualization available.')
+
+    try:
+        resp = requests.get(file_url)
+        resp.raise_for_status()
+        data = (
+            resp.json()
+        )  # {"waveform": "<json string>", "spectrogram": "<json string>"}
+
+        graphs = []
+        for name, fig_json in data.items():
+            fig_dict = json.loads(fig_json)
+            graphs.append(
+                dcc.Graph(
+                    id=f'graph-{name}',
+                    figure=fig_dict,
+                    style={'width': '100%', 'height': '400px', 'marginBottom': '20px'},
+                )
+            )
+        return graphs
+
+    except Exception as e:
+        return html.Div(f'Error loading visualization: {e}')
+
+
 def render_file_preview(
     s3_client,
     bucket_name: str,
     file_key: str,
     show_download: bool = True,
     show_delete: bool = False,
-    allow_rename: bool = True,  # new parameter
+    allow_rename: bool = True,
 ):
     """
     Render a professional and responsive file preview with optional rename/move.
-    Download/Delete buttons on top line, Rename/Move below (optional).
+    Includes automatic rendering of Plotly JSON graphs for *_viz.json files.
     """
     file_url = generate_presigned_url(s3_client, bucket_name, file_key)
 
@@ -370,20 +400,21 @@ def render_file_preview(
             style={'width': '100%', 'height': 'auto', 'borderRadius': '6px'},
         )
     elif file_key.endswith('_viz.json'):
-        # --- Special case: Analysis JSON visualization files ---
-        s3_resp = s3_client.get_object(Bucket=bucket_name, Key=file_key)
-        analysis_json = json.loads(s3_resp['Body'].read().decode('utf-8'))
-
-        figs = []
-        for k, fig_json in analysis_json.items():
-            fig = pio.from_json(fig_json)
-            figs.append(
-                dcc.Graph(
-                    figure=fig,
-                    style={'width': '100%', 'height': '400px', 'marginBottom': '20px'},
-                )
-            )
-        main_component = html.Div(figs)
+        safe_id = f"viz-{file_key.replace('/', '-')}"
+        main_component = html.Div(
+            [
+                # Store the presigned URL or S3 URL
+                dcc.Store(
+                    id={'type': 'viz-json-store', 'file_key': file_key},
+                    data=file_url,  # URL to fetch JSON
+                ),
+                # Container for the Plotly figure
+                html.Div(
+                    id=safe_id,
+                    style={'width': '100%', 'height': '400px'},
+                ),
+            ]
+        )
     else:
         main_component = html.Div(
             'Preview not available',
@@ -425,7 +456,7 @@ def render_file_preview(
         html.Div(top_buttons, className='d-flex flex-wrap mt-2'),
     ]
 
-    # --- Rename / Move button and section ---
+    # --- Rename / Move section ---
     if allow_rename:
         edit_button = dbc.Button(
             '✏ Rename / Move',
@@ -435,7 +466,6 @@ def render_file_preview(
             size='sm',
             className='mt-2 w-100',
         )
-
         rename_section = html.Div(
             id={'type': 'rename-section', 'file_key': file_key},
             style={'display': 'none', 'marginTop': '10px'},
@@ -479,10 +509,8 @@ def render_file_preview(
                 ),
             ],
         )
-
         components.extend([edit_button, rename_section])
 
-    # --- Wrap everything in a responsive container ---
     return (
         html.Div(
             components,
@@ -878,23 +906,47 @@ def get_viz_file_key(file_key: str, username: str = None) -> str:
     return viz_key
 
 
-def s3_viz_exists(s3_client, bucket: str, file_key: str, username: str = None) -> bool:
+def get_analysis_prefix(file_key: str, username: str) -> str:
     """
-    Return True if the _viz.json exists for the given file in S3.
+    Compute the S3 prefix where analysis (_viz.json) files are stored for a given input file.
 
     Args:
-        s3_client: boto3 S3 client
-        bucket: S3 bucket name
-        file_key: original audio file key
-        username: optional prefix if using per-user output folders
+        file_key: full path of the input file in S3, e.g. "pierre/inputs/recorded/New_file.webm"
+        username: username string
 
     Returns:
-        bool
+        str: S3 prefix of the analysis folder, e.g.
+             "pierre/outputs/recorded/New_file.webm/analysis/"
     """
-    viz_key = get_viz_file_key(file_key, username=username)
+    if file_key.startswith(f'{username}/inputs/'):
+        relative_path = file_key[len(f'{username}/inputs/') :]
+    else:
+        # fallback in case file_key is not under inputs/
+        relative_path = os.path.basename(file_key)
+
+    relative_no_ext, _ = os.path.splitext(relative_path)
+    return f'{username}/outputs/{relative_no_ext}/analysis/'
+
+
+def s3_viz_exists(s3_client, bucket: str, file_key: str, username: str) -> bool:
+    """
+    Return True if a _viz.json exists for the given file in S3.
+    """
+    prefix = get_analysis_prefix(file_key, username)
+    file_stem, _ = os.path.splitext(os.path.basename(file_key))
+    viz_key = f'{prefix}{file_stem}_viz.json'
+
     try:
         s3_client.head_object(Bucket=bucket, Key=viz_key)
         return True
     except s3_client.exceptions.ClientError:
-        # Could check error code 404 specifically if needed
         return False
+
+
+def list_viz_files(s3_client, bucket: str, file_key: str, username: str) -> list:
+    """
+    List all _viz.json files for a given input file.
+    """
+    prefix = get_analysis_prefix(file_key, username)
+    objs = s3_client.list_objects_v2(Bucket=bucket, Prefix=prefix).get('Contents', [])
+    return [obj['Key'] for obj in objs if obj['Key'].endswith('_viz.json')]
