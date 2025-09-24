@@ -8,12 +8,17 @@ from dash.exceptions import PreventUpdate
 from flask import session
 
 from app.services.utils.file_utils import (
+    _cached_list_files_in_s3,
+    _gps_mem_cache,
+    _presigned_cache,
     build_gallery_layout,
     build_gallery_map_with_gps,
     delete_file_from_s3,
     filter_files_by_type,
     get_images_with_gps,
     get_s3_client,
+    get_thumbnail_key,
+    invalidate_s3_cache,
     list_all_files,
     list_s3_folders,
     upload_files_to_s3,
@@ -28,6 +33,7 @@ logger = logging.getLogger(__name__)
 if settings.env != 'testing':
     dash.register_page(__name__, path='/gallery', name='Gallery', order=2)
 
+IMAGES_PER_PAGE = 10
 
 layout = html.Div(
     children=[
@@ -202,6 +208,34 @@ def update_auth_banner(_):
                                             ],
                                             className='mb-3 align-items-center',
                                         ),
+                                        dbc.Row(
+                                            [
+                                                dbc.Label(
+                                                    'Map View:',
+                                                    width=4,
+                                                    className='fw-bold',
+                                                ),
+                                                dbc.Col(
+                                                    dcc.Dropdown(
+                                                        id='map-view-dropdown',
+                                                        options=[
+                                                            {
+                                                                'label': 'Current folder',
+                                                                'value': 'folder',
+                                                            },
+                                                            {
+                                                                'label': 'All images in bucket',
+                                                                'value': 'all',
+                                                            },
+                                                        ],
+                                                        value='folder',  # default
+                                                        clearable=False,
+                                                    ),
+                                                    width=8,
+                                                ),
+                                            ],
+                                            className='mb-3 align-items-center',
+                                        ),
                                     ],
                                     style={
                                         'maxWidth': '600px',
@@ -347,6 +381,7 @@ def populate_gallery_bucket_dropdown(pathname):
     Input('type-dropdown', 'value'),
     State({'type': 'rename-file-input', 'file_key': ALL}, 'value'),
     State({'type': 'move-folder-input', 'file_key': ALL}, 'value'),
+    Input('map-view-dropdown', 'value'),
     prevent_initial_call=True,
 )
 def manage_gallery(
@@ -362,6 +397,7 @@ def manage_gallery(
     file_type,
     rename_inputs,
     move_inputs,
+    map_view,
 ):
     triggered = ctx.triggered_id
     delete_status = ''
@@ -370,8 +406,25 @@ def manage_gallery(
     # --- Handle delete ---
     if isinstance(triggered, dict) and triggered.get('type') == 'delete-file-btn':
         file_key = triggered['file_key']
+
+        # Delete original file
         delete_file_from_s3(client, bucket_name, file_key)
+
+        # Delete thumbnail using your helper
+        thumb_key = get_thumbnail_key(file_key)
+        try:
+            delete_file_from_s3(client, bucket_name, thumb_key)
+        except client.exceptions.NoSuchKey:
+            pass  # ignore if thumbnail doesn't exist
+
         delete_status = f'Deleted {file_key}'
+
+        # Invalidate caches
+        invalidate_s3_cache(bucket_name, folder)
+        invalidate_s3_cache(bucket_name, 'thumbnails')
+        _presigned_cache.pop(file_key, None)
+        _presigned_cache.pop(thumb_key, None)
+        _gps_mem_cache.pop(file_key, None)
 
     # --- Handle upload ---
     elif triggered == 'confirm-upload-btn' and upload_contents:
@@ -381,11 +434,26 @@ def manage_gallery(
                 f'{new}{os.path.splitext(orig)[1]}'
                 for orig, new in zip(original_filenames, renamed_filenames)
             ]
-
         target_folder = new_folder_name.strip() if new_folder_name else folder or ''
         upload_files_to_s3(
             client, bucket_name, upload_contents, filenames_to_upload, target_folder
         )
+
+        # Invalidate cache for this folder
+        invalidate_s3_cache(bucket_name, target_folder)
+
+        # Only image files (png, jpg, jpeg)
+        new_image_files = [
+            f'{target_folder}/{name}' if target_folder else name
+            for name in filenames_to_upload
+            if name.lower().endswith(('.png', '.jpg', '.jpeg'))
+        ]
+
+        if new_image_files:
+            images_with_gps = get_images_with_gps(client, bucket_name, new_image_files)
+            # Prefill presigned cache
+            for img in images_with_gps:
+                _presigned_cache[img['key']] = img['url']
 
     # --- Handle rename/move ---
     elif isinstance(triggered, dict) and triggered.get('type') == 'rename-file-btn':
@@ -395,7 +463,6 @@ def manage_gallery(
             for i, f in enumerate(ctx.inputs_list[2])
             if f['id']['file_key'] == file_key
         ][0]
-
         new_name = rename_inputs[idx] if rename_inputs else None
         new_folder = move_inputs[idx] if move_inputs else folder or ''
 
@@ -408,34 +475,108 @@ def manage_gallery(
                 f'{base_folder}/{new_name}{ext}' if base_folder else f'{new_name}{ext}'
             )
 
-            # Copy to new key, then delete old
+            # Rename main file
             client.copy_object(
                 Bucket=bucket_name,
                 CopySource={'Bucket': bucket_name, 'Key': file_key},
                 Key=new_key,
             )
             client.delete_object(Bucket=bucket_name, Key=file_key)
+
+            # Rename thumbnail
+            old_thumb_key = get_thumbnail_key(file_key)
+            new_thumb_key = get_thumbnail_key(new_key)
+            try:
+                client.copy_object(
+                    Bucket=bucket_name,
+                    CopySource={'Bucket': bucket_name, 'Key': old_thumb_key},
+                    Key=new_thumb_key,
+                )
+                client.delete_object(Bucket=bucket_name, Key=old_thumb_key)
+            except client.exceptions.NoSuchKey:
+                pass  # skip if thumbnail doesn't exist
+
             delete_status = f'Renamed/moved {file_key} → {new_key}'
+
+            # Invalidate caches
+            invalidate_s3_cache(bucket_name, folder)
+            invalidate_s3_cache(bucket_name, base_folder)
+            invalidate_s3_cache(bucket_name, 'thumbnails')
+            _presigned_cache.pop(file_key, None)
+            _presigned_cache.pop(old_thumb_key, None)
+            _gps_mem_cache.pop(file_key, None)
 
     # --- Refresh folder dropdown ---
     folders = list_s3_folders(client, bucket_name)
-    folder_options = [{'label': f or '(root)', 'value': f} for f in folders]
+    filtered_folders = [f for f in folders if f != 'thumbnails' and f != '']
+    folder_options = [{'label': f, 'value': f} for f in filtered_folders]
+
+    if not folder or folder == '' or folder == 'thumbnails':
+        folder = filtered_folders[0] if filtered_folders else ''
 
     # --- Refresh gallery ---
     all_files = list_all_files(client, bucket_name, folder)
     filtered_files = filter_files_by_type(all_files, file_type)
+
+    # --- Build gallery layout ---
     gallery_div = build_gallery_layout(
         client, bucket_name, filtered_files, show_delete=True
     )
 
-    # --- Get images with GPS ---
-    images_with_gps = get_images_with_gps(client, bucket_name, filtered_files)
+    # --- Build GPS map if images ---
+    if file_type == 'image':
+        if map_view == 'all':
+            all_bucket_files = list_all_files(client, bucket_name)
+            image_files = [
+                f
+                for f in all_bucket_files
+                if f.lower().endswith(('.png', '.jpg', '.jpeg'))
+            ]
+        else:
+            image_files = [
+                f
+                for f in filtered_files
+                if f.lower().endswith(('.png', '.jpg', '.jpeg'))
+            ]
 
-    # --- Build map below gallery ---
-    map_div = build_gallery_map_with_gps(images_with_gps)
+        images_with_gps = get_images_with_gps(client, bucket_name, image_files)
+        map_div = build_gallery_map_with_gps(images_with_gps)
 
-    # --- Return combined layout ---
-    return html.Div([map_div, html.Hr(), gallery_div]), delete_status, folder_options
+        label_text = (
+            'Displaying all images in bucket'
+            if map_view == 'all'
+            else f'Displaying images from folder: {folder}'
+        )
+        map_label = html.H5(
+            label_text, style={'marginBottom': '10px', 'fontStyle': 'italic'}
+        )
+
+        gallery_label = html.H5(
+            f'Displaying images from folder: {folder}',
+            style={'marginBottom': '10px', 'fontStyle': 'italic'},
+        )
+
+        tabs = dcc.Tabs(
+            [
+                dcc.Tab(
+                    label='Gallery', children=html.Div([gallery_label, gallery_div])
+                ),
+                dcc.Tab(label='Map', children=html.Div([map_label, map_div])),
+            ]
+        )
+        container = tabs
+    else:
+        folder_label = html.H5(
+            (
+                f'Displaying files from folder: {folder}'
+                if folder
+                else 'Displaying files from root'
+            ),
+            style={'marginBottom': '10px', 'fontStyle': 'italic'},
+        )
+        container = html.Div([folder_label, gallery_div])
+
+    return container, delete_status, folder_options
 
 
 @callback(
@@ -490,26 +631,46 @@ def populate_upload_folder_options(bucket_name):
     Input('gallery-page-load-trigger', 'data'),
 )
 def show_default_gallery(_):
-    # Always show dashlab-bucket for non-logged-in users
+    """Display default gallery for non-logged-in users with caching."""
     bucket_name = 'dashlab-bucket'
-    folder = ''  # root
-    file_type = 'image'  # default, can adjust
-
-    all_files = list_all_files(get_s3_client(bucket_name), bucket_name, folder)
-    filtered_files = filter_files_by_type(all_files, file_type)
-    gallery_div = build_gallery_layout(
-        get_s3_client(bucket_name), bucket_name, filtered_files, allow_rename=False
-    )
+    folder = ''  # root folder
+    file_type = 'image'  # default type
 
     client = get_s3_client(bucket_name)
-    # --- Get images with GPS ---
+
+    # --- Use cached file listing ---
+    all_files = _cached_list_files_in_s3(client, bucket_name, folder)
+    filtered_files = filter_files_by_type(all_files, file_type)
+
+    # --- Build gallery layout ---
+    gallery_div = build_gallery_layout(
+        client, bucket_name, filtered_files, allow_rename=False
+    )
+
+    # --- Get images with GPS (still uses cache inside get_images_with_gps) ---
     images_with_gps = get_images_with_gps(client, bucket_name, filtered_files)
 
-    # --- Build map below gallery ---
+    # --- Build map ---
     map_div = build_gallery_map_with_gps(images_with_gps)
 
-    # --- Return combined layout ---
-    return html.Div([map_div, html.Hr(), gallery_div])
+    # --- Tabs for Gallery / Map ---
+    folder_label = html.H5(
+        'Displaying files from root',
+        style={'marginBottom': '10px', 'fontStyle': 'italic'},
+    )
+    map_label = html.H5(
+        'Displaying all images in bucket',
+        style={'marginBottom': '10px', 'fontStyle': 'italic'},
+    )
+
+    tabs = dcc.Tabs(
+        [
+            dcc.Tab(label='Gallery', children=html.Div([folder_label, gallery_div])),
+            dcc.Tab(label='Map', children=html.Div([map_label, map_div])),
+        ]
+    )
+
+    return tabs
 
 
 @callback(
@@ -618,7 +779,12 @@ def update_selected_marker(clickData, fig):
         [
             html.Img(
                 src=url,
-                style={'width': '100%', 'height': 'auto', 'borderRadius': '6px'},
+                style={
+                    'width': '100%',  # full width of the container
+                    'maxHeight': '400px',  # constrain height
+                    'objectFit': 'contain',  # preserve aspect ratio
+                    'borderRadius': '6px',
+                },
             ),
             html.Div(
                 filename,
@@ -631,7 +797,8 @@ def update_selected_marker(clickData, fig):
                     'whiteSpace': 'nowrap',
                 },
             ),
-        ]
+        ],
+        style={'maxWidth': '400px', 'margin': '0 auto'},  # optional centering
     )
 
     return preview_div, fig

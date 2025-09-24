@@ -23,15 +23,19 @@ import json
 import logging
 import mimetypes
 import os
+import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
-from typing import List, Optional, Union
+from functools import lru_cache
+from typing import Dict, List, Optional, Union
 
 import boto3
 import dash_bootstrap_components as dbc
 import plotly.graph_objects as go
 import requests
 from botocore.exceptions import BotoCoreError, ClientError
+from cachetools import TTLCache, cached
+from cachetools.keys import hashkey
 from dash import dcc, html
 from PIL import ExifTags, Image
 from PIL.ExifTags import GPSTAGS, TAGS
@@ -41,8 +45,24 @@ from pymongo.errors import ServerSelectionTimeoutError
 from config.logging import setup_logging
 from config.settings import settings
 
+# 🔑 In-memory cache: stores final images_with_gps list per (bucket, sorted_keys)
+#    - maxsize: number of distinct key sets to remember
+#    - ttl: seconds to keep (e.g., 600 = 10 minutes)
+_gps_mem_cache = TTLCache(maxsize=128, ttl=600)
+thumbnail_exists_cache = TTLCache(maxsize=2048, ttl=300)  # 5 min cache
+
+# --- Simple in-memory cache ---
+_presigned_cache: dict[str, tuple[str, float]] = {}  # {cache_key: (url, expiry_time)}
+_PRESIGNED_TTL = 900  # 15 min internal refresh window (can be < expiration)
+
+# Cache up to 512 distinct calls for 5 minutes (adjust as needed)
+_s3_cache = TTLCache(maxsize=512, ttl=300)
+
+
 setup_logging()
 logger = logging.getLogger(__name__)
+
+logging.getLogger('PIL').setLevel(logging.WARNING)
 AWS_REGION = 'us-east-1'
 
 MONGO_URI = (
@@ -61,7 +81,8 @@ BUCKET_REGIONS_MAP = {
 }
 
 
-def get_s3_client(bucket_name):
+@lru_cache(maxsize=32)
+def get_s3_client(bucket_name: str):
     region = BUCKET_REGIONS_MAP.get(bucket_name, 'us-east-1')
     return boto3.client(
         's3',
@@ -70,15 +91,6 @@ def get_s3_client(bucket_name):
         region_name=region,
     )
 
-
-AWS_REGION = 'us-east-1'
-# Initialize boto3 S3 client
-s3_client = boto3.client(
-    's3',
-    aws_access_key_id=settings.aws_access_key_id,
-    aws_secret_access_key=settings.aws_secret_access_key,
-    region_name=AWS_REGION,
-)
 
 card_style = {
     'backgroundColor': '#e9f5ff',  # custom light blue
@@ -129,63 +141,44 @@ def get_allowed_folders_for_user(session, s3_client, bucket_name):
     return sorted(list(set(allowed)))
 
 
-def list_all_files(
-    s3_client, bucket_name: str, folder_name: Optional[str] = None
-) -> List[str]:
-    """
-    Return all file keys in a bucket or in a specific folder.
-
-    :param s3_client: boto3 S3 client
-    :param bucket_name: Name of the S3 bucket
-    :param folder_name: Optional folder prefix
-    :return: List of file keys (strings)
-    """
-    files = list_files_in_s3(s3_client, bucket_name, folder_name)
-    return [f['value'] for f in files]  # just return the S3 keys
-
-
-def list_s3_folders(s3_client, bucket_name) -> List[str]:
-    """
-    List top-level folders in the S3 bucket.
-
-    :return: List of folder names (strings), including empty string for root
-    """
-    if not bucket_name:
-        logger.warning('No bucket name provided to list_s3_folders')
-        return []
-    try:
-        response = s3_client.list_objects_v2(Bucket=bucket_name, Delimiter='/')
-        prefixes = response.get('CommonPrefixes', [])
-        folders = [p['Prefix'].rstrip('/') for p in prefixes]
-        return [''] + folders  # Include root folder as empty string
-    except Exception as e:
-        logger.error(f'Failed to list S3 folders: {e}')
-        return []
-
-
 def list_files_in_s3(
     s3_client, bucket_name: str, folder_name: Optional[str] = None
 ) -> List[dict]:
-    """
-    Return a list of dicts suitable for dcc.Dropdown options for files in S3.
-
-    :param bucket_name: Name of the S3 bucket
-    :param folder_name: Optional folder prefix
-    :return: List of dicts [{"label": ..., "value": ...}]
-    """
+    """Return list of dicts suitable for dcc.Dropdown options."""
     if not bucket_name:
         return []
-
-    prefix = f"{folder_name.strip().rstrip('/')}/" if folder_name else ''
     try:
-        response = s3_client.list_objects_v2(Bucket=bucket_name, Prefix=prefix)
-        files = response.get('Contents', [])
-        file_keys = [obj['Key'] for obj in files if not obj['Key'].endswith('/')]
-        return [{'label': key[len(prefix) :], 'value': key} for key in file_keys]
+        keys = _cached_list_files_in_s3(s3_client, bucket_name, folder_name)
+        prefix = f"{folder_name.strip().rstrip('/')}/" if folder_name else ''
+        return [{'label': key[len(prefix) :], 'value': key} for key in keys]
     except Exception as e:
         logger.error(
             f"Error listing files in bucket '{bucket_name}', folder '{folder_name}': {e}"
         )
+        return []
+
+
+def list_all_files(
+    s3_client, bucket_name: str, folder_name: Optional[str] = None
+) -> List[str]:
+    """Return all file keys in a bucket or a specific folder."""
+    try:
+        return _cached_list_files_in_s3(s3_client, bucket_name, folder_name)
+    except Exception as e:
+        logger.error(f'Failed to list all files: {e}')
+        return []
+
+
+def list_s3_folders(s3_client, bucket_name) -> List[str]:
+    """List top-level folders in the S3 bucket (includes root)."""
+    if not bucket_name:
+        logger.warning('No bucket name provided to list_s3_folders')
+        return []
+    try:
+        folders = _cached_list_s3_folders(s3_client, bucket_name)
+        return [''] + folders
+    except Exception as e:
+        logger.error(f'Failed to list S3 folders: {e}')
         return []
 
 
@@ -256,39 +249,57 @@ def generate_presigned_url(
     s3_client, bucket_name: str, object_key: str, expiration: int = 3600
 ) -> Optional[str]:
     """
-    Generate a pre-signed URL to access a file in S3.
+    Generate a cached pre-signed URL to access a file in S3.
 
-    Parameters:
-        bucket_name (str): Name of the S3 bucket.
-        object_key (str): Key (path) of the file within the bucket.
-        expiration (int): Time in seconds for the URL to remain valid. Default is 3600 (1 hour).
+    - Uses a 15-minute in-memory cache to avoid regenerating URLs
+      on every render.
+    - Still respects the `expiration` you pass to S3.
 
-    Returns:
-        Optional[str]: A pre-signed URL if successful, or None if generation fails.
+    Parameters
+    ----------
+    bucket_name : str
+        Name of the S3 bucket.
+    object_key : str
+        Key (path) of the file within the bucket.
+    expiration : int
+        Time in seconds for the URL to remain valid (default 3600).
+
+    Returns
+    -------
+    Optional[str]
+        A cached or freshly generated pre-signed URL.
     """
     try:
+        cache_key = f'{bucket_name}/{object_key}/{expiration}'
+        now = time.time()
+
+        # Reuse if still valid in our TTL window
+        if cache_key in _presigned_cache:
+            url, expiry = _presigned_cache[cache_key]
+            if now < expiry:
+                return url
+
         # Guess MIME type from file extension
         mime_type, _ = mimetypes.guess_type(object_key)
 
-        # Build request parameters
-        params = {
-            'Bucket': bucket_name,
-            'Key': object_key,
-        }
-
+        params = {'Bucket': bucket_name, 'Key': object_key}
         if mime_type:
             params['ResponseContentDisposition'] = 'inline'
             params['ResponseContentType'] = mime_type
         else:
-            # Default to download if MIME type is unknown
             params['ResponseContentDisposition'] = 'attachment'
 
-        # Generate the pre-signed URL
+        # Generate fresh URL
         url = s3_client.generate_presigned_url(
             ClientMethod='get_object', Params=params, ExpiresIn=expiration
         )
 
-        logger.info(f'Generated pre-signed URL for: s3://{bucket_name}/{object_key}')
+        # Cache for a safe window (shorter than S3 expiration)
+        _presigned_cache[cache_key] = (url, now + min(_PRESIGNED_TTL, expiration - 60))
+
+        logger.info(
+            f'[CacheMiss] Generated pre-signed URL for: s3://{bucket_name}/{object_key}'
+        )
         return url
 
     except (BotoCoreError, ClientError) as e:
@@ -362,6 +373,28 @@ def render_viz_from_s3_json(file_url: str):
         return html.Div(f'Error loading visualization: {e}')
 
 
+@lru_cache(maxsize=2048)  # adjust size as needed
+def get_thumbnail_key(file_key: str) -> str:
+    """
+    Convert an original file key to the corresponding thumbnail key.
+    Example: 'folder/image.jpg' -> 'thumbnails/folder/image.jpg'
+
+    Uses an LRU cache to avoid recomputing for the same keys repeatedly.
+    """
+    return f'thumbnails/{file_key}'
+
+
+def thumbnail_exists(s3_client, bucket, key):
+    if key in thumbnail_exists_cache:
+        return True
+    try:
+        s3_client.head_object(Bucket=bucket, Key=key)
+        thumbnail_exists_cache[key] = True
+        return True
+    except s3_client.exceptions.ClientError:
+        return False
+
+
 def render_file_preview(
     s3_client,
     bucket_name: str,
@@ -371,20 +404,33 @@ def render_file_preview(
     allow_rename: bool = True,
 ):
     """
-    Render a professional and responsive file preview with optional rename/move.
-    Includes automatic rendering of Plotly JSON graphs for *_viz.json files.
+    Render a professional and responsive file preview.
+    Uses a thumbnail for display if available,
+    but always provides a download link for the full-size original.
     """
-    file_url = generate_presigned_url(s3_client, bucket_name, file_key)
+    # --- Determine thumbnail (for display) ---
+    preview_key = file_key
+    if is_image(file_key):
+        thumbnail_key = get_thumbnail_key(file_key)
+        if thumbnail_exists(s3_client, bucket_name, thumbnail_key):
+            preview_key = thumbnail_key
+        else:
+            preview_key = file_key
+
+    # ✅ Thumbnail URL (for display)
+    preview_url = generate_presigned_url(s3_client, bucket_name, preview_key)
+    # ✅ Full-size original URL (for download)
+    original_url = generate_presigned_url(s3_client, bucket_name, file_key)
 
     # --- Determine preview component ---
     if is_image(file_key):
         main_component = html.Img(
-            src=file_url,
+            src=preview_url,
             style={'width': '100%', 'height': 'auto', 'borderRadius': '6px'},
         )
     elif is_pdf(file_key):
         main_component = html.Iframe(
-            src=file_url,
+            src=preview_url,
             style={
                 'width': '100%',
                 'height': '400px',
@@ -394,11 +440,11 @@ def render_file_preview(
         )
     elif is_audio(file_key):
         main_component = html.Audio(
-            src=file_url, controls=True, style={'width': '100%'}
+            src=preview_url, controls=True, style={'width': '100%'}
         )
     elif is_video(file_key):
         main_component = html.Video(
-            src=file_url,
+            src=preview_url,
             controls=True,
             style={'width': '100%', 'height': 'auto', 'borderRadius': '6px'},
         )
@@ -406,12 +452,10 @@ def render_file_preview(
         safe_id = f"viz-{file_key.replace('/', '-')}"
         main_component = html.Div(
             [
-                # Store the presigned URL or S3 URL
                 dcc.Store(
                     id={'type': 'viz-json-store', 'file_key': file_key},
-                    data=file_url,  # URL to fetch JSON
+                    data=preview_url,
                 ),
-                # Container for the Plotly figure
                 html.Div(
                     id=safe_id,
                     style={'width': '100%', 'height': '400px'},
@@ -434,8 +478,8 @@ def render_file_preview(
     if show_download:
         top_buttons.append(
             dbc.Button(
-                '⬇ Download',
-                href=file_url,
+                '⬇ Download Original',
+                href=original_url,  # ✅ Always use the ORIGINAL for download
                 target='_blank',
                 color='success',
                 size='sm',
@@ -799,6 +843,7 @@ def build_gallery_layout(
     show_delete=False,
     allow_rename=True,
 ) -> html.Div:
+
     gallery_items = []
 
     for key in file_keys:
@@ -1017,62 +1062,120 @@ def extract_lat_lon(gps_data):
         return None, None
 
 
-def get_images_with_gps(s3_client, bucket_name, file_keys):
+def get_images_with_gps(
+    s3_client, bucket_name: str, file_keys: List[str]
+) -> List[Dict]:
     """
     Return a list of dicts with image URL and GPS coordinates (if available).
-    Only includes files with GPS metadata.
+    Uses thumbnails/gps_data.json to cache previously computed GPS data in S3
+    AND an in-memory TTL cache to reduce S3 calls within the same process.
     """
-    images_with_gps = []
+    # ✅ First, check in-memory cache
+    cache_key = (bucket_name, tuple(sorted(file_keys)))
+    if cache_key in _gps_mem_cache:
+        return _gps_mem_cache[cache_key]
+
+    gps_cache_key = 'thumbnails/gps_data.json'
+
+    # --- Load existing cache from S3 (persistent layer) ---
+    try:
+        obj = s3_client.get_object(Bucket=bucket_name, Key=gps_cache_key)
+        gps_cache = json.load(obj['Body'])
+    except s3_client.exceptions.NoSuchKey:
+        gps_cache = {}
+    except Exception:
+        gps_cache = {}
+
+    updated = False  # flag to know if we need to write back
+
+    def _convert_to_degrees(value):
+        d, m, s = value
+        return float(d) + float(m) / 60 + float(s) / 3600
 
     for key in file_keys:
-        # Get S3 object
-        obj = s3_client.get_object(Bucket=bucket_name, Key=key)
-        img_bytes = obj['Body'].read()
-
-        # Open with PIL
-        img = Image.open(io.BytesIO(img_bytes))
-        exif_data = img._getexif() or {}
-
-        # Map EXIF tag names
-        exif = {ExifTags.TAGS.get(tag, tag): value for tag, value in exif_data.items()}
-
-        # Check GPS info
-        gps_info = exif.get('GPSInfo')
-        if not gps_info:
+        # Skip if already cached with lat/lon
+        if key in gps_cache and 'lat' in gps_cache[key] and 'lon' in gps_cache[key]:
             continue
 
-        def _convert_to_degrees(value):
-            """Convert GPS coordinates to float degrees."""
-            d, m, s = value
-            return float(d) + float(m) / 60 + float(s) / 3600
+        # Fetch image once to extract GPS
+        try:
+            obj = s3_client.get_object(Bucket=bucket_name, Key=key)
+            img_bytes = obj['Body'].read()
+            img = Image.open(io.BytesIO(img_bytes))
+            exif_data = img._getexif() or {}
+            exif = {
+                ExifTags.TAGS.get(tag, tag): value for tag, value in exif_data.items()
+            }
+            gps_info = exif.get('GPSInfo')
+            if not gps_info:
+                continue
 
-        gps_tags = {ExifTags.GPSTAGS.get(t, t): v for t, v in gps_info.items()}
+            gps_tags = {ExifTags.GPSTAGS.get(t, t): v for t, v in gps_info.items()}
+            lat_ref = gps_tags.get('GPSLatitudeRef', 'N')
+            lon_ref = gps_tags.get('GPSLongitudeRef', 'E')
+            if 'GPSLatitude' not in gps_tags or 'GPSLongitude' not in gps_tags:
+                continue
 
-        lat_ref = gps_tags.get('GPSLatitudeRef', 'N')
-        lon_ref = gps_tags.get('GPSLongitudeRef', 'E')
-        lat = _convert_to_degrees(gps_tags['GPSLatitude'])
-        lon = _convert_to_degrees(gps_tags['GPSLongitude'])
+            lat = _convert_to_degrees(gps_tags['GPSLatitude'])
+            lon = _convert_to_degrees(gps_tags['GPSLongitude'])
+            if lat_ref == 'S':
+                lat = -lat
+            if lon_ref == 'W':
+                lon = -lon
 
-        if lat_ref == 'S':
-            lat = -lat
-        if lon_ref == 'W':
-            lon = -lon
+            # Use thumbnail key instead of original key
+            thumb_key = get_thumbnail_key(key)
+            url = s3_client.generate_presigned_url(
+                'get_object',
+                Params={'Bucket': bucket_name, 'Key': thumb_key},
+                ExpiresIn=3600,
+            )
 
-        # Build public URL (assuming your S3 bucket is public or presigned URL)
-        url = s3_client.generate_presigned_url(
-            'get_object',
-            Params={'Bucket': bucket_name, 'Key': key},
-            ExpiresIn=3600,
-        )
+            gps_cache[key] = {'lat': lat, 'lon': lon, 'url': url}
+            updated = True
+        except Exception as e:
+            print(f'Error processing {key}: {e}')
+
+    # --- Persist back to S3 if new data added ---
+    if updated:
+        try:
+            gps_json_bytes = json.dumps(gps_cache).encode('utf-8')
+            s3_client.put_object(
+                Bucket=bucket_name, Key=gps_cache_key, Body=gps_json_bytes
+            )
+        except Exception as e:
+            print(f'Error updating gps_data.json: {e}')
+
+    # --- Build final list (refresh URLs if missing) ---
+    images_with_gps = []
+    for key in file_keys:
+        data = gps_cache.get(key)
+        if not data or 'lat' not in data or 'lon' not in data:
+            continue
+
+        if 'url' not in data:
+            data['url'] = s3_client.generate_presigned_url(
+                'get_object', Params={'Bucket': bucket_name, 'Key': key}, ExpiresIn=3600
+            )
+            gps_cache[key] = data
+            updated = True
 
         images_with_gps.append(
-            {
-                'key': key,
-                'url': url,
-                'lat': float(lat),
-                'lon': float(lon),
-            }
+            {'key': key, 'url': data['url'], 'lat': data['lat'], 'lon': data['lon']}
         )
+
+    # If we added URLs but didn’t write earlier
+    if updated:
+        try:
+            gps_json_bytes = json.dumps(gps_cache).encode('utf-8')
+            s3_client.put_object(
+                Bucket=bucket_name, Key=gps_cache_key, Body=gps_json_bytes
+            )
+        except Exception as e:
+            print(f'Error updating gps_data.json (URL refresh): {e}')
+
+    # ✅ Save to in-memory TTL cache for subsequent calls
+    _gps_mem_cache[cache_key] = images_with_gps
 
     return images_with_gps
 
@@ -1146,3 +1249,26 @@ def build_gallery_map_with_gps(images_with_gps, selected_key=None):
             ),
         ],
     )
+
+
+@cached(_s3_cache, key=lambda c, b, f=None: hashkey('list_files_in_s3', b, f))
+def _cached_list_files_in_s3(s3_client, bucket_name: str, folder_name: Optional[str]):
+    """Cached raw S3 list_objects_v2 call."""
+    prefix = f"{folder_name.strip().rstrip('/')}/" if folder_name else ''
+    response = s3_client.list_objects_v2(Bucket=bucket_name, Prefix=prefix)
+    files = response.get('Contents', [])
+    return [obj['Key'] for obj in files if not obj['Key'].endswith('/')]
+
+
+@cached(_s3_cache, key=lambda c, b: hashkey('list_s3_folders', b))
+def _cached_list_s3_folders(s3_client, bucket_name: str):
+    """Cached folder list using Delimiter='/'."""
+    response = s3_client.list_objects_v2(Bucket=bucket_name, Delimiter='/')
+    prefixes = response.get('CommonPrefixes', [])
+    return [p['Prefix'].rstrip('/') for p in prefixes]
+
+
+def invalidate_s3_cache(bucket_name: str, folder_name: Optional[str] = None):
+    """Clear cached results for a specific bucket/folder."""
+    _s3_cache.pop(hashkey('list_s3_folders', bucket_name), None)
+    _s3_cache.pop(hashkey('list_files_in_s3', bucket_name, folder_name), None)

@@ -14,12 +14,12 @@ from app.services.utils.file_utils import (
     build_database_table,
     delete_file_from_s3,
     fetch_all_files,
+    get_s3_client,
     handle_deletion,
     list_files_in_s3,
     list_s3_folders,
     move_file_and_update_metadata,
     render_file_preview,
-    s3_client,
     upload_files_to_s3,
 )
 from app.services.utils.ui_utils import bucket_dropdown
@@ -353,6 +353,8 @@ def upload_files_callback(
         else []
     )
 
+    s3_client = get_s3_client(bucket_name)
+
     # Handle renaming (preserve extensions)
     if renamed_filenames:
         new_names = [
@@ -387,6 +389,7 @@ def update_database_entries_callback(
 ) -> Union[html.Table, html.Div]:
     triggered_id = callback_context.triggered[0]['prop_id'].split('.')[0]
 
+    s3_client = get_s3_client(bucket_name)
     if triggered_id == 'delete-btn':
         error_msg = handle_deletion(s3_client, bucket_name, delete_paths)
         if error_msg:
@@ -402,6 +405,8 @@ def update_database_entries_callback(
     Input('bucket-selector', 'value'),
 )
 def update_file_selector_options(folder_name: Optional[str], bucket_name: str):
+
+    s3_client = get_s3_client(bucket_name)
     return list_files_in_s3(s3_client, bucket_name, folder_name)
 
 
@@ -416,6 +421,8 @@ def update_file_selector_options(folder_name: Optional[str], bucket_name: str):
 def display_selected_file(file_key: Optional[str], bucket_name: str):
     if not file_key:
         return html.Div('No file selected.'), '', None, ''
+
+    s3_client = get_s3_client(bucket_name)
     return render_file_preview(s3_client, bucket_name, file_key)
 
 
@@ -440,6 +447,7 @@ def update_file_metadata_callback(
     new_filename: Optional[str],
 ) -> str:
     target_folder = new_folder_name or selected_folder
+    s3_client = get_s3_client(bucket_name)
     return move_file_and_update_metadata(
         s3_client, bucket_name, selected_file_key, new_tags, target_folder, new_filename
     )
@@ -457,8 +465,10 @@ def update_file_metadata_callback(
 def refresh_folder_options(
     upload_contents, update_clicks, edit_bucket: str, upload_bucket
 ):
-    edit_folders = list_s3_folders(s3_client, edit_bucket)
-    upload_folders = list_s3_folders(s3_client, upload_bucket)
+    s3_client_1 = get_s3_client(edit_bucket)
+    s3_client_2 = get_s3_client(upload_bucket)
+    edit_folders = list_s3_folders(s3_client_1, edit_bucket)
+    upload_folders = list_s3_folders(s3_client_2, upload_bucket)
     options_edit = [{'label': f or '(root)', 'value': f} for f in edit_folders]
     options_upload = [{'label': f or '(root)', 'value': f} for f in upload_folders]
     return options_upload, options_edit, options_edit
@@ -517,6 +527,7 @@ def populate_bucket_dropdown(pathname):
     prevent_initial_call=True,
 )
 def delete_file(n_clicks, file_key, bucket):
+    s3_client = get_s3_client(bucket)
     if not file_key:
         return (
             html.Span('No file selected to delete.', style={'color': 'red'}),

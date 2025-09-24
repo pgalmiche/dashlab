@@ -20,7 +20,6 @@ from app.services.utils.file_utils import (
     list_viz_files,
     move_file_and_update_metadata,
     render_file_preview,
-    s3_client,
     upload_files_to_s3,
 )
 from config.logging import setup_logging
@@ -643,6 +642,9 @@ def splitbox_generate_presigned_upload():
     if not file_key:
         return jsonify({'error': 'file_key is required'}), 400
 
+    bucket_name = 'splitbox-bucket'
+    s3_client = get_s3_client(bucket_name)
+
     presigned_post = s3_client.generate_presigned_post(
         Bucket='splitbox-bucket',
         Key=file_key,
@@ -718,6 +720,7 @@ def master_file_callback(
     triggered = ctx.triggered_id
     bucket_name = 'splitbox-bucket'
     username = get_current_username(session)
+    s3_client = get_s3_client(bucket_name)
 
     status_msg = ''
     updated_preview = html.Div('No file selected.')

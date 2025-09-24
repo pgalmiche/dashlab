@@ -23,6 +23,7 @@ dependencies = [
   "beautifulsoup4",
   "requests",
   "Pillow",
+  "cachetools",
 ]
 
 [project.optional-dependencies]
