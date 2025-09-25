@@ -1,5 +1,7 @@
 import logging
 import os
+import uuid
+from datetime import datetime
 
 import dash
 import dash_bootstrap_components as dbc
@@ -15,11 +17,14 @@ from app.services.utils.file_utils import (
     build_gallery_map_with_gps,
     delete_file_from_s3,
     filter_files_by_type,
+    generate_presigned_uploads,
+    get_current_username,
     get_images_with_gps,
     get_s3_client,
     get_thumbnail_key,
     invalidate_s3_cache,
     list_all_files,
+    list_root_files,
     list_s3_folders,
     upload_files_to_s3,
 )
@@ -147,8 +152,14 @@ def update_auth_banner(_):
                                                     [
                                                         dcc.Dropdown(
                                                             id='gallery-folder-dropdown',
-                                                            options=[],  # filled dynamically
+                                                            options=[
+                                                                {
+                                                                    'label': 'Root',
+                                                                    'value': '',
+                                                                }
+                                                            ],  # root option
                                                             placeholder='Select existing folder',
+                                                            value='',  # default to root
                                                             searchable=True,
                                                             clearable=True,
                                                             style={
@@ -365,6 +376,27 @@ def populate_gallery_bucket_dropdown(pathname):
     return options, default
 
 
+def filter_splitbox_folders(folders: list[str], username: str) -> list[str]:
+    """
+    Only keep shared/, user/inputs/, and user/outputs/ recursively.
+    Always include the base folders with trailing slash.
+    """
+    allowed_bases = ['shared/', f'{username}/inputs/', f'{username}/outputs/']
+
+    filtered = [
+        f
+        for f in folders
+        if any(f == base or f.startswith(base) for base in allowed_bases)
+    ]
+
+    # Ensure base folders exist
+    for base in allowed_bases:
+        if base not in filtered:
+            filtered.append(base)
+
+    return filtered
+
+
 @callback(
     Output('bucket-gallery-container', 'children'),
     Output('delete-status', 'children'),
@@ -403,30 +435,24 @@ def manage_gallery(
     delete_status = ''
     client = get_s3_client(bucket_name)
 
-    # --- Handle delete ---
     if isinstance(triggered, dict) and triggered.get('type') == 'delete-file-btn':
+        # DELETE
         file_key = triggered['file_key']
-
-        # Delete original file
         delete_file_from_s3(client, bucket_name, file_key)
-
-        # Delete thumbnail using your helper
         thumb_key = get_thumbnail_key(file_key)
         try:
             delete_file_from_s3(client, bucket_name, thumb_key)
         except client.exceptions.NoSuchKey:
-            pass  # ignore if thumbnail doesn't exist
+            pass
 
-        delete_status = f'Deleted {file_key}'
-
-        # Invalidate caches
+        # 🔥 Force fresh data next call
         invalidate_s3_cache(bucket_name, folder)
-        invalidate_s3_cache(bucket_name, 'thumbnails')
-        _presigned_cache.pop(file_key, None)
-        _presigned_cache.pop(thumb_key, None)
-        _gps_mem_cache.pop(file_key, None)
+        _presigned_cache.clear()
+        _gps_mem_cache.clear()
 
-    # --- Handle upload ---
+        delete_status = f'Deleted {file_key} at {datetime.utcnow().isoformat()}'
+
+    # ---------- UPLOAD ----------
     elif triggered == 'confirm-upload-btn' and upload_contents:
         filenames_to_upload = original_filenames
         if renamed_filenames and len(renamed_filenames) == len(original_filenames):
@@ -439,23 +465,22 @@ def manage_gallery(
             client, bucket_name, upload_contents, filenames_to_upload, target_folder
         )
 
-        # Invalidate cache for this folder
-        invalidate_s3_cache(bucket_name, target_folder)
+        invalidate_s3_cache(bucket_name, folder)
+        _presigned_cache.clear()
+        _gps_mem_cache.clear()
 
-        # Only image files (png, jpg, jpeg)
+        # Warm presigned cache for images
         new_image_files = [
             f'{target_folder}/{name}' if target_folder else name
             for name in filenames_to_upload
             if name.lower().endswith(('.png', '.jpg', '.jpeg'))
         ]
-
         if new_image_files:
             images_with_gps = get_images_with_gps(client, bucket_name, new_image_files)
-            # Prefill presigned cache
             for img in images_with_gps:
                 _presigned_cache[img['key']] = img['url']
 
-    # --- Handle rename/move ---
+    # ---------- RENAME / MOVE ----------
     elif isinstance(triggered, dict) and triggered.get('type') == 'rename-file-btn':
         file_key = triggered['file_key']
         idx = [
@@ -475,7 +500,6 @@ def manage_gallery(
                 f'{base_folder}/{new_name}{ext}' if base_folder else f'{new_name}{ext}'
             )
 
-            # Rename main file
             client.copy_object(
                 Bucket=bucket_name,
                 CopySource={'Bucket': bucket_name, 'Key': file_key},
@@ -494,36 +518,63 @@ def manage_gallery(
                 )
                 client.delete_object(Bucket=bucket_name, Key=old_thumb_key)
             except client.exceptions.NoSuchKey:
-                pass  # skip if thumbnail doesn't exist
+                pass
 
-            delete_status = f'Renamed/moved {file_key} → {new_key}'
+            delete_status = f'Renamed/moved {file_key} → {new_key} at {datetime.utcnow().isoformat()}'
 
-            # Invalidate caches
-            invalidate_s3_cache(bucket_name, folder)
-            invalidate_s3_cache(bucket_name, base_folder)
-            invalidate_s3_cache(bucket_name, 'thumbnails')
-            _presigned_cache.pop(file_key, None)
-            _presigned_cache.pop(old_thumb_key, None)
-            _gps_mem_cache.pop(file_key, None)
+        invalidate_s3_cache(bucket_name, folder)
+        _presigned_cache.clear()
+        _gps_mem_cache.clear()
 
-    # --- Refresh folder dropdown ---
+    if folder is None:
+        folder = ''  # root folder
+
+    username = get_current_username(session)
+
     folders = list_s3_folders(client, bucket_name)
-    filtered_folders = [f for f in folders if f != 'thumbnails' and f != '']
-    folder_options = [{'label': f, 'value': f} for f in filtered_folders]
+    # ✅ Always skip system folders
+    filtered_folders = [f for f in folders if f not in ('thumbnails', '')]
 
-    if not folder or folder == '' or folder == 'thumbnails':
-        folder = filtered_folders[0] if filtered_folders else ''
+    # ✅ Enforce Splitbox restrictions
+    if bucket_name == 'splitbox-bucket':
+        filtered_folders = filter_splitbox_folders(filtered_folders, username)
+        # ✅ Optional: default to a safe folder if none is selected
+        if not folder:  # empty or None
+            preferred = f'{username}/inputs'
+            if any(f.startswith(preferred) for f in filtered_folders):
+                folder = preferred
+            elif 'shared/' in filtered_folders:
+                folder = 'shared/'
 
-    # --- Refresh gallery ---
-    all_files = list_all_files(client, bucket_name, folder)
+    # Add explicit "Root" option at the top
+    if bucket_name == 'splitbox-bucket':
+        # 🚫 No Root, only allowed folders
+        folder_options = [{'label': f, 'value': f} for f in filtered_folders]
+    else:
+        # ✅ Keep Root for normal buckets
+        folder_options = [{'label': 'Root', 'value': ''}] + [
+            {'label': f, 'value': f} for f in filtered_folders
+        ]
+
+    if folder == '':
+        if bucket_name == 'splitbox-bucket':
+            # 🚫 No root files for Splitbox
+            all_files = []
+        else:
+            all_files = list_root_files(client, bucket_name)
+    else:
+        all_files = list_all_files(client, bucket_name, folder)
+
     filtered_files = filter_files_by_type(all_files, file_type)
 
-    # --- Build gallery layout ---
+    folder_label = folder or 'Root'
+
+    # Build gallery layout
     gallery_div = build_gallery_layout(
         client, bucket_name, filtered_files, show_delete=True
     )
 
-    # --- Build GPS map if images ---
+    # Build GPS map
     if file_type == 'image':
         if map_view == 'all':
             all_bucket_files = list_all_files(client, bucket_name)
@@ -542,39 +593,46 @@ def manage_gallery(
         images_with_gps = get_images_with_gps(client, bucket_name, image_files)
         map_div = build_gallery_map_with_gps(images_with_gps)
 
-        label_text = (
-            'Displaying all images in bucket'
-            if map_view == 'all'
-            else f'Displaying images from folder: {folder}'
-        )
-        map_label = html.H5(
-            label_text, style={'marginBottom': '10px', 'fontStyle': 'italic'}
-        )
-
-        gallery_label = html.H5(
-            f'Displaying images from folder: {folder}',
-            style={'marginBottom': '10px', 'fontStyle': 'italic'},
-        )
-
         tabs = dcc.Tabs(
             [
                 dcc.Tab(
-                    label='Gallery', children=html.Div([gallery_label, gallery_div])
+                    label='Gallery',
+                    children=html.Div(
+                        [
+                            html.H5(f'Displaying images from folder: {folder_label}'),
+                            gallery_div,
+                        ]
+                    ),
                 ),
-                dcc.Tab(label='Map', children=html.Div([map_label, map_div])),
+                dcc.Tab(
+                    label='Map',
+                    children=html.Div(
+                        [
+                            html.H5(
+                                'Displaying all images in bucket'
+                                if map_view == 'all'
+                                else f'Displaying images from folder: {folder_label}'
+                            ),
+                            map_div,
+                        ]
+                    ),
+                ),
             ]
         )
         container = tabs
     else:
-        folder_label = html.H5(
-            (
-                f'Displaying files from folder: {folder}'
-                if folder
-                else 'Displaying files from root'
-            ),
-            style={'marginBottom': '10px', 'fontStyle': 'italic'},
+        container = html.Div(
+            [
+                html.H5(
+                    f'Displaying files from folder: {folder_label}',
+                    style={'marginBottom': '10px', 'fontStyle': 'italic'},
+                ),
+                gallery_div,
+            ]
         )
-        container = html.Div([folder_label, gallery_div])
+
+    # ✅ Force React to treat container as new
+    container = html.Div([container], key=str(uuid.uuid4()))
 
     return container, delete_status, folder_options
 
@@ -688,8 +746,6 @@ def get_presigned_uploads(n_clicks, filenames, folder, new_folder, bucket_name):
     target_folder = new_folder or folder or ''
     s3_client = get_s3_client(bucket_name)
 
-    from app.services.utils.file_utils import generate_presigned_uploads
-
     presigned_posts = generate_presigned_uploads(
         s3_client, bucket_name, filenames, target_folder
     )
@@ -760,45 +816,30 @@ def toggle_rename_sections(show_clicks):
 )
 def update_selected_marker(clickData, fig):
     if not clickData:
-        return (
-            html.Div('Click a marker to preview the image.', style={'padding': '10px'}),
-            fig,
-        )
-
-    selected_index = clickData['points'][0]['pointIndex']
+        return html.Div('Click a marker to preview the image.'), fig
+    idx = clickData['points'][0]['pointIndex']
     url = clickData['points'][0]['customdata']
     filename = clickData['points'][0]['hovertext']
-
-    # Update marker colors
+    # highlight marker
     num_points = len(fig['data'][0]['lat'])
     fig['data'][0]['marker']['color'] = [
-        'green' if i == selected_index else 'blue' for i in range(num_points)
+        'green' if i == idx else 'blue' for i in range(num_points)
     ]
-
-    preview_div = html.Div(
+    preview = html.Div(
         [
             html.Img(
                 src=url,
                 style={
-                    'width': '100%',  # full width of the container
-                    'maxHeight': '400px',  # constrain height
-                    'objectFit': 'contain',  # preserve aspect ratio
+                    'maxWidth': '100%',
+                    'maxHeight': '400px',
+                    'objectFit': 'contain',
                     'borderRadius': '6px',
                 },
             ),
             html.Div(
                 filename,
-                style={
-                    'fontWeight': 'bold',
-                    'marginTop': '5px',
-                    'textAlign': 'center',
-                    'overflow': 'hidden',
-                    'textOverflow': 'ellipsis',
-                    'whiteSpace': 'nowrap',
-                },
+                style={'marginTop': '5px', 'fontWeight': 'bold', 'textAlign': 'center'},
             ),
-        ],
-        style={'maxWidth': '400px', 'margin': '0 auto'},  # optional centering
+        ]
     )
-
-    return preview_div, fig
+    return preview, fig

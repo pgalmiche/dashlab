@@ -1,5 +1,5 @@
 import logging
-import time
+import os
 from urllib.parse import urlparse
 
 import dash
@@ -10,12 +10,15 @@ from dash.dependencies import MATCH, Input, Output, State
 from flask import jsonify, request, session
 
 from app.services.utils.file_utils import (
+    _cached_list_files_in_s3,
+    _presigned_cache,
     card_style,
     delete_file_from_s3,
     get_allowed_folders_for_user,
     get_analysis_prefix,
     get_current_username,
     get_s3_client,
+    invalidate_s3_cache,
     list_files_in_s3,
     list_viz_files,
     move_file_and_update_metadata,
@@ -170,205 +173,203 @@ def update_auth_banner(_):
                                                 className='fw-bold mb-3',
                                             ),
                                             html.P(
-                                                'Your inputs/ ouputs/ folders are yours only.'
+                                                'Your inputs/outputs/folders are yours only.'
                                             ),
                                             html.P(
                                                 'Everything in the shared folder is shared between all the splitbox members!'
                                             ),
                                             html.Hr(),
-                                            html.Div(
-                                                style={
-                                                    'display': 'flex',
-                                                    'gap': '40px',
-                                                    'alignItems': 'flex-start',
-                                                    'flexWrap': 'wrap',
-                                                },
+                                            # 🔹 TABS start here
+                                            dcc.Tabs(
+                                                id='splitbox-action-tabs',
+                                                value='upload',  # default tab
                                                 children=[
-                                                    # Left column: Folder choice + tags + upload button
-                                                    html.Div(
-                                                        style={
-                                                            'flex': '1 1 300px',  # flex-grow, flex-shrink, flex-basis
-                                                            'minWidth': '250px',
-                                                            'maxWidth': '100%',
-                                                            'display': 'flex',
-                                                            'flexDirection': 'column',
-                                                            'gap': '10px',
-                                                        },
-                                                        children=[
-                                                            # Existing folder selection or new folder
-                                                            html.H3(
-                                                                'Upload from your device:',
-                                                                className='fw-bold mb-3',
-                                                            ),
-                                                            html.Label(
-                                                                'Select folder to save or create a new one:'
-                                                            ),
-                                                            dcc.Dropdown(
-                                                                id='splitbox-save-folder-selector',
-                                                                options=[],  # will be filled dynamically
-                                                                placeholder='Select folder',
-                                                                clearable=True,
-                                                                style={
-                                                                    'width': '100%',
-                                                                    'maxWidth': '300px',  # cap the width on large screens
-                                                                },
-                                                            ),
-                                                            dcc.Input(
-                                                                id='splitbox-new-folder-name',
-                                                                type='text',
-                                                                placeholder='Or enter new folder name',
-                                                                style={
-                                                                    'width': '100%',
-                                                                    'maxWidth': '300px',  # cap the width on large screens
-                                                                },
-                                                            ),
-                                                            # Tags input
-                                                            html.Label(
-                                                                'Add tags for the file (comma separated):'
-                                                            ),
-                                                            dcc.Input(
-                                                                id='splitbox-file-tags',
-                                                                type='text',
-                                                                placeholder='tag1, tag2, ...',
-                                                                style={
-                                                                    'width': '100%',
-                                                                    'maxWidth': '300px',  # cap the width on large screens
-                                                                },
-                                                            ),
-                                                            # Upload button below folder and tags
-                                                            dcc.Upload(
-                                                                id='splitbox-upload-file',
-                                                                children=html.Button(
-                                                                    'Upload your beatbox file here',
-                                                                    id='upload-button',
+                                                    # ---------------- UPLOAD TAB ----------------
+                                                    dcc.Tab(
+                                                        label='📤 Upload',
+                                                        value='upload',
+                                                        children=html.Div(
+                                                            style={
+                                                                'padding': '20px',
+                                                                'display': 'flex',
+                                                                'flexDirection': 'column',
+                                                                'gap': '10px',
+                                                                'maxWidth': '600px',
+                                                            },
+                                                            children=[
+                                                                html.H3(
+                                                                    'Upload from your device:',
+                                                                    className='fw-bold mb-3',
                                                                 ),
-                                                                multiple=False,
-                                                            ),
-                                                            html.Div(
-                                                                id='splitbox-upload-status'
-                                                            ),
-                                                            html.Hr(),
-                                                            html.H4(
-                                                                '🎤 Or record directly:',
-                                                                className='fw-bold mt-3',
-                                                            ),
-                                                            html.Label(
-                                                                'This recording will be saved in your inputs/recorded/ folder.'
-                                                            ),
-                                                            dcc.Input(
-                                                                id='splitbox-recording-filename',
-                                                                type='text',
-                                                                placeholder='Recording name (no extension)',
-                                                                style={
-                                                                    'width': '100%',
-                                                                    'maxWidth': '300px',
-                                                                },
-                                                            ),
-                                                            # Hidden Store for username
-                                                            dcc.Store(
-                                                                id='splitbox-username-store',
-                                                                data=get_current_username(
-                                                                    session
-                                                                ),  # set username from Flask session
-                                                            ),
-                                                            html.Button(
-                                                                'Start Recording',
-                                                                id='splitbox-start-recording',
-                                                                n_clicks=0,
-                                                                className='btn btn-secondary',
-                                                            ),
-                                                            html.Button(
-                                                                'Stop & Upload',
-                                                                id='splitbox-stop-recording',
-                                                                n_clicks=0,
-                                                                className='btn btn-primary',
-                                                            ),
-                                                            dcc.Store(
-                                                                id='splitbox-uploaded-recording-key'
-                                                            ),
-                                                            html.Div(
-                                                                id='splitbox-recording-status',
-                                                                className='mt-2 text-info',
-                                                            ),
-                                                        ],
+                                                                html.Label(
+                                                                    'Select folder to save or create a new one:'
+                                                                ),
+                                                                dcc.Dropdown(
+                                                                    id='splitbox-save-folder-selector',
+                                                                    options=[],
+                                                                    placeholder='Select folder',
+                                                                    clearable=True,
+                                                                    style={
+                                                                        'width': '100%'
+                                                                    },
+                                                                ),
+                                                                dcc.Input(
+                                                                    id='splitbox-new-folder-name',
+                                                                    type='text',
+                                                                    placeholder='Or enter new folder name',
+                                                                    style={
+                                                                        'width': '100%'
+                                                                    },
+                                                                ),
+                                                                html.Label(
+                                                                    'Add tags for the file (comma separated):'
+                                                                ),
+                                                                dcc.Input(
+                                                                    id='splitbox-file-tags',
+                                                                    type='text',
+                                                                    placeholder='tag1, tag2, ...',
+                                                                    style={
+                                                                        'width': '100%'
+                                                                    },
+                                                                ),
+                                                                dcc.Upload(
+                                                                    id='splitbox-upload-file',
+                                                                    children=html.Button(
+                                                                        'Upload your beatbox file here',
+                                                                        id='upload-button',
+                                                                    ),
+                                                                    multiple=False,
+                                                                ),
+                                                                html.Div(
+                                                                    id='splitbox-upload-status'
+                                                                ),
+                                                            ],
+                                                        ),
                                                     ),
-                                                    # Right column: Folder selector + file selector (for processing)
-                                                    html.Div(
-                                                        style={
-                                                            'flex': '2 1 300px',
-                                                            'minWidth': '250px',
-                                                            'maxWidth': '100%',
-                                                            'display': 'flex',
-                                                            'flexDirection': 'column',
-                                                            'gap': '10px',
-                                                        },
-                                                        children=[
-                                                            html.H3(
-                                                                'Or load a saved file:',
-                                                                className='fw-bold mb-3',
-                                                            ),
-                                                            html.Label(
-                                                                'Select a splitbox folder:'
-                                                            ),
-                                                            dcc.Dropdown(
-                                                                id='splitbox-folder-selector',
-                                                                options=[],
-                                                                placeholder='Select a folder',
-                                                                clearable=True,
-                                                                style={
-                                                                    'width': '100%',
-                                                                    'maxWidth': '500px',  # cap the width on large screens
-                                                                },
-                                                            ),
-                                                            html.Label(
-                                                                'Select an audio file to work on:'
-                                                            ),
-                                                            dcc.Dropdown(
-                                                                id='splitbox-file-selector',
-                                                                placeholder='Select a file',
-                                                                style={
-                                                                    'width': '100%',
-                                                                    'maxWidth': '600px',  # cap the width on large screens
-                                                                },
-                                                                clearable=True,
-                                                            ),
-                                                            html.Div(
-                                                                id='splitbox-delete-file-status',
-                                                                className='mt-2 text-info',
-                                                            ),
-                                                            html.Hr(
-                                                                style={
-                                                                    'marginTop': '75px',
-                                                                    'marginBottom': '30px',
-                                                                }
-                                                            ),
-                                                            dcc.Store(
-                                                                id='splitbox-refresh-files'
-                                                            ),
-                                                            dcc.Store(
-                                                                id='splitbox-refresh-recordings'
-                                                            ),
-                                                            html.H3(
-                                                                '📂 Selected File Preview:',
-                                                                className='fw-bold mb-3',
-                                                            ),
-                                                            html.Div(
-                                                                id='splitbox-file-display'
-                                                            ),
-                                                            html.Br(),
-                                                            html.Div(
-                                                                id='splitbox-delete-file-status',
-                                                                className='mt-2 text-info',
-                                                            ),
-                                                        ],
+                                                    # ---------------- RECORD TAB ----------------
+                                                    dcc.Tab(
+                                                        label='🎤 Record',
+                                                        value='record',
+                                                        children=html.Div(
+                                                            style={
+                                                                'padding': '20px',
+                                                                'display': 'flex',
+                                                                'flexDirection': 'column',
+                                                                'gap': '10px',
+                                                                'maxWidth': '600px',
+                                                            },
+                                                            children=[
+                                                                html.H3(
+                                                                    'Record directly:',
+                                                                    className='fw-bold mb-3',
+                                                                ),
+                                                                html.Label(
+                                                                    'This recording will be saved in your inputs/recorded/ folder.'
+                                                                ),
+                                                                dcc.Input(
+                                                                    id='splitbox-recording-filename',
+                                                                    type='text',
+                                                                    placeholder='Recording name (no extension)',
+                                                                    style={
+                                                                        'width': '100%'
+                                                                    },
+                                                                ),
+                                                                dcc.Store(
+                                                                    id='splitbox-username-store',
+                                                                    data=get_current_username(
+                                                                        session
+                                                                    ),
+                                                                ),
+                                                                html.Button(
+                                                                    'Start Recording',
+                                                                    id='splitbox-start-recording',
+                                                                    n_clicks=0,
+                                                                    className='btn btn-secondary',
+                                                                ),
+                                                                html.Button(
+                                                                    'Stop & Upload',
+                                                                    id='splitbox-stop-recording',
+                                                                    n_clicks=0,
+                                                                    className='btn btn-primary',
+                                                                ),
+                                                                dcc.Store(
+                                                                    id='splitbox-uploaded-recording-key'
+                                                                ),
+                                                                html.Div(
+                                                                    id='splitbox-recording-status',
+                                                                    className='mt-2 text-info',
+                                                                ),
+                                                            ],
+                                                        ),
+                                                    ),
+                                                    # ---------------- LOAD TAB ----------------
+                                                    dcc.Tab(
+                                                        label='📥 Load',
+                                                        value='load',
+                                                        children=html.Div(
+                                                            style={
+                                                                'padding': '20px',
+                                                                'display': 'flex',
+                                                                'flexDirection': 'column',
+                                                                'gap': '10px',
+                                                                'maxWidth': '600px',
+                                                            },
+                                                            children=[
+                                                                html.H3(
+                                                                    'Load a saved file:',
+                                                                    className='fw-bold mb-3',
+                                                                ),
+                                                                html.Label(
+                                                                    'Select a splitbox folder:'
+                                                                ),
+                                                                dcc.Dropdown(
+                                                                    id='splitbox-folder-selector',
+                                                                    options=[],
+                                                                    placeholder='Select a folder',
+                                                                    clearable=True,
+                                                                    style={
+                                                                        'width': '100%'
+                                                                    },
+                                                                ),
+                                                                html.Label(
+                                                                    'Select an audio file to work on:'
+                                                                ),
+                                                                dcc.Dropdown(
+                                                                    id='splitbox-file-selector',
+                                                                    placeholder='Select a file',
+                                                                    style={
+                                                                        'width': '100%'
+                                                                    },
+                                                                    clearable=True,
+                                                                ),
+                                                                html.Div(
+                                                                    id='splitbox-delete-file-status',
+                                                                    className='mt-2 text-info',
+                                                                ),
+                                                                dcc.Store(
+                                                                    id='splitbox-refresh-files'
+                                                                ),
+                                                                dcc.Store(
+                                                                    id='splitbox-refresh-recordings'
+                                                                ),
+                                                            ],
+                                                        ),
                                                     ),
                                                 ],
                                             ),
+                                            html.Hr(),
+                                            # 🔹 Common Preview Section
+                                            html.H3(
+                                                '📂 Selected File Preview:',
+                                                className='fw-bold mb-3',
+                                            ),
+                                            html.Div(id='splitbox-file-display'),
                                         ]
                                     ),
                                     className='mb-3',
                                     style=card_style,
                                 ),
+                                # ---------------- Processing Card ----------------
                                 dbc.Card(
                                     dbc.CardBody(
                                         [
@@ -386,12 +387,10 @@ def update_auth_banner(_):
                                                 'Analyze file',
                                                 id='run-analyze-btn',
                                                 n_clicks=0,
-                                                color='primary',  # Bootstrap primary color
-                                                size='lg',  # large button
-                                                className='mb-2',  # margin bottom
-                                                style={
-                                                    'width': '200px'
-                                                },  # optional fixed width
+                                                color='primary',
+                                                size='lg',
+                                                className='mb-2',
+                                                style={'width': '200px'},
                                             ),
                                             html.Br(),
                                             dcc.Loading(
@@ -416,18 +415,18 @@ def update_auth_banner(_):
                                                 ],
                                                 id='run-splitbox-btn',
                                                 n_clicks=0,
-                                                color='success',  # Green color to indicate “action”
-                                                size='lg',  # Large button
-                                                className='mb-3',  # Margin bottom
+                                                color='success',
+                                                size='lg',
+                                                className='mb-3',
                                                 style={
-                                                    'width': '200px',  # Optional fixed width for consistency
-                                                    'transition': 'all 0.2s ease-in-out',  # Smooth hover effect
+                                                    'width': '200px',
+                                                    'transition': 'all 0.2s ease-in-out',
                                                 },
                                             ),
                                             html.Br(),
                                             dcc.Loading(
                                                 id='loading-splitbox',
-                                                type='circle',  # "circle", "dot", or "default"
+                                                type='circle',
                                                 children=html.Div(
                                                     id='splitbox-results'
                                                 ),
@@ -656,28 +655,6 @@ def splitbox_generate_presigned_upload():
 
 
 @callback(
-    Output('splitbox-delete-file-status', 'children'),
-    Output('splitbox-refresh-files', 'data'),
-    Input({'type': 'delete-file-btn', 'file_key': ALL}, 'n_clicks'),
-    prevent_initial_call=True,
-)
-def manage_deletions(delete_clicks):
-    triggered = ctx.triggered_id
-    delete_status = ''
-    bucket_name = 'splitbox-bucket'
-
-    # Only proceed if a button was actually clicked
-    if isinstance(triggered, dict) and triggered.get('type') == 'delete-file-btn':
-        file_key = triggered['file_key']
-        # Safety check: only delete if the click count > 0
-        if delete_clicks[delete_clicks.index(ctx.triggered[0]['value'])] > 0:
-            delete_file_from_s3(get_s3_client(bucket_name), bucket_name, file_key)
-            delete_status = f'Deleted {file_key}'
-
-    return delete_status, time.time()
-
-
-@callback(
     Output('splitbox-file-display', 'children'),
     Output('splitbox-upload-status', 'children'),
     Output('splitbox-save-folder-selector', 'options'),
@@ -689,8 +666,9 @@ def manage_deletions(delete_clicks):
     Input('splitbox-upload-file', 'contents'),
     Input('splitbox-folder-selector', 'value'),
     Input('url', 'pathname'),
-    Input('splitbox-uploaded-recording-key', 'data'),  # <-- new recording key
+    Input('splitbox-uploaded-recording-key', 'data'),
     Input({'type': 'rename-file-btn', 'file_key': ALL}, 'n_clicks'),
+    Input({'type': 'delete-file-btn', 'file_key': ALL}, 'n_clicks'),  # NEW
     Input('splitbox-file-selector', 'value'),
     Input('splitbox-refresh-files', 'data'),
     Input('splitbox-refresh-recordings', 'data'),
@@ -705,8 +683,9 @@ def master_file_callback(
     upload_contents,
     folder_selector_value,
     pathname,
-    uploaded_recording_key,  # ✅ use this consistently
+    uploaded_recording_key,
     rename_clicks,
+    delete_clicks,  # NEW
     selected_file,
     refresher_files,
     refresher_recordings,
@@ -725,7 +704,7 @@ def master_file_callback(
     status_msg = ''
     updated_preview = html.Div('No file selected.')
 
-    # --- Folder dropdowns ---
+    # ---------------- Folders dropdown ----------------
     folders = get_allowed_folders_for_user(session, s3_client, bucket_name)
     folder_options = [
         {
@@ -741,32 +720,73 @@ def master_file_callback(
     )
     folder_value = folder_selector_value or save_folder_value
 
-    # --- Initialize file dropdown ---
-    file_options = list_files_in_s3(s3_client, bucket_name, folder_value)
+    def is_recursive(f):
+        return (
+            f.startswith(f'{username}/inputs')
+            or f.startswith(f'{username}/outputs')
+            or f.startswith('shared/')
+        )
+
+    file_options = list_files_in_s3(
+        s3_client, bucket_name, folder_value, recursive=is_recursive(folder_value)
+    )
     file_value = selected_file or (file_options[0]['value'] if file_options else None)
 
-    # === Handle mic recording upload ===
+    # ==========================================================
+    # 🔧 Utility: manage related outputs
+    # ==========================================================
+    def manage_related_outputs(input_key, action, new_folder=None):
+        """
+        Move or delete outputs that share the same subfolder + basename.
+        action = 'move' | 'delete'
+        """
+        # Determine input subfolder and basename
+        if not input_key.startswith(f'{username}/inputs/'):
+            return
+        rel_path = input_key[len(f'{username}/inputs/') :]
+        subfolder = os.path.dirname(rel_path)
+        base_no_ext = os.path.splitext(os.path.basename(rel_path))[0]
+
+        outputs_prefix = f'{username}/outputs/{subfolder}/'
+        all_outputs = _cached_list_files_in_s3(s3_client, bucket_name, outputs_prefix)
+
+        related = [
+            k for k in all_outputs if os.path.basename(k).startswith(base_no_ext)
+        ]
+        for out_key in related:
+            if action == 'delete':
+                delete_file_from_s3(s3_client, bucket_name, out_key)
+            elif action == 'move' and new_folder:
+                # Mirror new inputs folder inside outputs
+                new_rel = new_folder[len(f'{username}/inputs/') :]
+                new_out_folder = f'{username}/outputs/{new_rel}'
+                move_file_and_update_metadata(
+                    s3_client, bucket_name, out_key, target_folder=new_out_folder
+                )
+
+    # === 🎤 Recording upload ===
     if triggered == 'splitbox-uploaded-recording-key' and uploaded_recording_key:
         status_msg = f'🎤 Recording uploaded successfully: {uploaded_recording_key}'
-        folder_name = f'{username}/inputs'
+        folder_name = f'{username}/inputs/recorded'
+        invalidate_s3_cache(bucket_name, folder_name)
+        _presigned_cache.clear()
         if folder_name not in [o['value'] for o in folder_options]:
             folder_options.append({'label': folder_name, 'value': folder_name})
         folder_value = save_folder_value = folder_name
-        file_options = list_files_in_s3(s3_client, bucket_name, folder_name)
+        file_options = list_files_in_s3(
+            s3_client, bucket_name, folder_name, recursive=is_recursive(folder_name)
+        )
+        file_value = uploaded_recording_key
 
-    # === Handle regular file upload ===
+    # === 📤 Upload ===
     elif triggered == 'splitbox-upload-file' and upload_contents and upload_filename:
         if new_folder_name:
-            folder_name = (
-                f'shared/{new_folder_name.strip()}'
-                if save_folder_value == 'shared/'
-                else f'{username}/inputs/{new_folder_name.strip()}'
-            )
+            folder_name = f'{username}/inputs/{new_folder_name.strip()}'
         else:
             folder_name = save_folder_value or f'{username}/inputs/'
         tags_list = [tag.strip() for tag in (file_tags or '').split(',') if tag.strip()]
         try:
-            _, _, uploaded_files = upload_files_to_s3(
+            _, _, _ = upload_files_to_s3(
                 s3_client,
                 bucket_name,
                 [upload_contents],
@@ -777,10 +797,14 @@ def master_file_callback(
             status_msg = (
                 f"File '{upload_filename}' uploaded successfully to '{folder_name}'"
             )
+            invalidate_s3_cache(bucket_name, folder_name)
+            _presigned_cache.clear()
             if folder_name not in [o['value'] for o in folder_options]:
                 folder_options.append({'label': folder_name, 'value': folder_name})
             folder_value = save_folder_value = folder_name
-            file_options = list_files_in_s3(s3_client, bucket_name, folder_name)
+            file_options = list_files_in_s3(
+                s3_client, bucket_name, folder_name, recursive=is_recursive(folder_name)
+            )
             file_value = next(
                 (f['value'] for f in file_options if f['label'] == upload_filename),
                 None,
@@ -788,13 +812,14 @@ def master_file_callback(
         except Exception as e:
             status_msg = f'Error uploading file: {e}'
 
-    # === Handle rename/move ===
+    # === ✏️ Rename/Move ===
     elif isinstance(triggered, dict) and triggered.get('type') == 'rename-file-btn':
         idx = [
             i
             for i, ck in enumerate(ctx.inputs_list[4])
             if ck['id']['file_key'] == triggered['file_key']
         ][0]
+
         new_name = (
             rename_new_names[idx]
             if rename_new_names and rename_new_names[idx]
@@ -802,26 +827,88 @@ def master_file_callback(
         )
         target_folder = rename_target_folders[idx] if rename_target_folders else None
         file_key_to_move = triggered['file_key']
+
+        # --- Normalize old & new folders ---
+        username = get_current_username(session)
+
+        def normalize_folder(path: str) -> str:
+            """
+            Always ensure we stay inside user's inputs folder.
+            Treat '' or None as 'username/inputs'.
+            """
+            if not path:
+                return f'{username}/inputs'
+            # Strip leading slashes and force prefix if missing
+            path = path.strip().lstrip('/')
+            if not path.startswith(f'{username}/inputs'):
+                path = f'{username}/inputs/{path}'
+            return path.rstrip('/')
+
+        old_folder = normalize_folder(os.path.dirname(file_key_to_move))
+        new_folder = normalize_folder(target_folder) if target_folder else old_folder
+
+        # Perform the actual rename / move
         status_msg = move_file_and_update_metadata(
             s3_client,
             bucket_name,
             file_key_to_move,
             new_tags=file_tags,
-            target_folder=target_folder,
+            target_folder=new_folder,
             new_name=new_name,
         )
 
-    # Refresh list to ensure latest files are visible
-    file_options = list_files_in_s3(s3_client, bucket_name, folder_value)
-    file_value = file_value or (file_options[0]['value'] if file_options else None)
+        # ✅ Move related outputs
+        manage_related_outputs(file_key_to_move, 'move', new_folder)
 
-    if uploaded_recording_key:
-        status_msg = f'🎤 Recording uploaded successfully: {uploaded_recording_key}'
-        folder_value = save_folder_value = f'{username}/inputs/recorded'
+        # 🔥 Invalidate caches for BOTH old and new folders
+        invalidate_s3_cache(bucket_name, old_folder)
+        invalidate_s3_cache(bucket_name, new_folder)
+        _presigned_cache.clear()
+
+        # Refresh current folder files but keep selection
         file_options = list_files_in_s3(s3_client, bucket_name, folder_value)
-        file_value = uploaded_recording_key
+        # ✅ Force Dash dropdowns to update
+        folder_value = new_folder  # highlight the *new* folder
+        save_folder_value = new_folder  # also update the save folder dropdown
+        file_value = None
+        if new_name:
+            # if we renamed the file, select it directly
+            ext = os.path.splitext(file_key_to_move)[1]
+            new_key = f'{new_folder}/{new_name}{ext}'
+            file_value = new_key
+        elif file_options:
+            # fallback: first file in the updated folder
+            file_value = file_options[0]['value']
 
-    # --- Render preview if file is selected ---
+        # Update the status message to include the final key
+        status_msg = f'✅ File moved/renamed to {file_value or new_folder}'
+
+    # === 🗑️ Delete ===
+    elif isinstance(triggered, dict) and triggered.get('type') == 'delete-file-btn':
+        idx = [
+            i
+            for i, ck in enumerate(ctx.inputs_list[5])
+            if ck['id']['file_key'] == triggered['file_key']
+        ][0]
+        if delete_clicks[idx] > 0:
+            file_key = triggered['file_key']
+            delete_file_from_s3(s3_client, bucket_name, file_key)
+            # ➕ delete related outputs
+            manage_related_outputs(file_key, 'delete')
+            invalidate_s3_cache(bucket_name, folder_value)
+            _presigned_cache.clear()
+            status_msg = f'Deleted {file_key}'
+            file_options = list_files_in_s3(
+                s3_client,
+                bucket_name,
+                folder_value,
+                recursive=is_recursive(folder_value),
+            )
+
+    # --- Refresh fallback ---
+    if file_value is None and file_options:
+        file_value = file_options[0]['value']
+
     if file_value:
         display_component, _, _, _ = render_file_preview(
             s3_client, bucket_name, file_value, show_delete=True
@@ -836,7 +923,7 @@ def master_file_callback(
         folder_options,
         folder_value,
         file_options,
-        file_value,  # ✅ ensures the new recording is pre-selected
+        file_value,
     )
 
 

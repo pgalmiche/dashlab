@@ -142,15 +142,35 @@ def get_allowed_folders_for_user(session, s3_client, bucket_name):
 
 
 def list_files_in_s3(
-    s3_client, bucket_name: str, folder_name: Optional[str] = None
+    s3_client,
+    bucket_name: str,
+    folder_name: Optional[str] = None,
+    recursive: bool = False,
 ) -> List[dict]:
-    """Return list of dicts suitable for dcc.Dropdown options."""
+    """Return list of dicts suitable for dcc.Dropdown options.
+
+    If recursive=True, include files in subfolders.
+    """
     if not bucket_name:
         return []
+
     try:
         keys = _cached_list_files_in_s3(s3_client, bucket_name, folder_name)
         prefix = f"{folder_name.strip().rstrip('/')}/" if folder_name else ''
-        return [{'label': key[len(prefix) :], 'value': key} for key in keys]
+
+        files = []
+        for key in keys:
+            if recursive:
+                # Keep the full relative path after the prefix
+                label = key[len(prefix) :]
+                files.append({'label': label, 'value': key})
+            else:
+                # Only top-level files: no "/" after prefix
+                rest = key[len(prefix) :]
+                if '/' not in rest:
+                    files.append({'label': rest, 'value': key})
+
+        return files
     except Exception as e:
         logger.error(
             f"Error listing files in bucket '{bucket_name}', folder '{folder_name}': {e}"
@@ -558,6 +578,44 @@ def render_file_preview(
         )
         components.extend([edit_button, rename_section])
 
+        filename = os.path.basename(file_key)
+        foldername = os.path.dirname(file_key) or 'Root'
+
+        components.append(
+            html.Div(
+                [
+                    html.Div(
+                        f'📁 Folder: {foldername}',
+                        style={
+                            'fontWeight': '600',
+                            'fontSize': '12px',
+                            'marginTop': '8px',
+                            'whiteSpace': 'nowrap',
+                            'overflow': 'hidden',
+                            'textOverflow': 'ellipsis',
+                            'width': '100%',
+                            'textAlign': 'center',
+                        },
+                        title=foldername,
+                    ),
+                    html.Div(
+                        f'🗂️ File: {filename}',
+                        style={
+                            'fontWeight': 'bold',
+                            'fontSize': '13px',
+                            'marginTop': '3px',
+                            'whiteSpace': 'nowrap',
+                            'overflow': 'hidden',
+                            'textOverflow': 'ellipsis',
+                            'width': '100%',
+                            'textAlign': 'center',
+                        },
+                        title=filename,
+                    ),
+                ]
+            )
+        )
+
     return (
         html.Div(
             components,
@@ -656,12 +714,14 @@ def move_file_and_update_metadata(
 def delete_file_from_s3(s3_client, bucket_name, filename: str) -> None:
     """
     Delete a file from S3.
-
-    :param filename: Object key (path + filename) in S3
     """
     try:
         s3_client.delete_object(Bucket=bucket_name, Key=filename)
         logger.info(f'Deleted {filename} from S3.')
+
+        # 🔑 Invalidate folder cache so gallery refreshes instantly
+        folder_name = '/'.join(filename.split('/')[:-1]) or None
+        invalidate_s3_cache(bucket_name, folder_name)
     except Exception as e:
         logger.error(f'Error deleting {filename} from S3: {e}')
 
@@ -669,22 +729,26 @@ def delete_file_from_s3(s3_client, bucket_name, filename: str) -> None:
 def delete_entries_by_path(s3_client, bucket_name, paths_to_delete: List[str]) -> None:
     """
     Delete files from S3 and remove their metadata from MongoDB.
-
-    :param paths_to_delete: List of file paths (URLs) to delete
     """
     collection = get_collection()
     if collection is None:
         logger.info('Skipping deletion: no DB connection.')
         return
 
+    affected_folders = set()
+
     for file_path in paths_to_delete:
         if file_path.startswith('https://'):
-            # Extract S3 key from URL
             parts = file_path.split('/')
-            filename = '/'.join(parts[3:])  # bucket + region parts removed
+            filename = '/'.join(parts[3:])  # remove bucket + region
             delete_file_from_s3(s3_client, bucket_name, filename)
+            affected_folders.add('/'.join(filename.split('/')[:-1]) or None)
         else:
             logger.warning(f'Invalid file path for deletion: {file_path}')
+
+    # ✅ Invalidate caches for all affected folders
+    for folder in affected_folders:
+        invalidate_s3_cache(bucket_name, folder)
 
     collection.delete_many({'file_path': {'$in': paths_to_delete}})
 
@@ -856,25 +920,9 @@ def build_gallery_layout(
             allow_rename=allow_rename,
         )
 
-        filename = key.split('/')[-1]
-
         item_div = html.Div(
             [
                 display_component,
-                html.Div(
-                    filename,
-                    style={
-                        'fontWeight': 'bold',
-                        'marginTop': '5px',
-                        'fontSize': '13px',
-                        'overflow': 'hidden',
-                        'textOverflow': 'ellipsis',
-                        'whiteSpace': 'nowrap',
-                        'width': '100%',
-                        'textAlign': 'center',
-                    },
-                    title=filename,
-                ),
                 html.Div(
                     tags_str,
                     style={
@@ -1063,21 +1111,32 @@ def extract_lat_lon(gps_data):
 
 
 def get_images_with_gps(
-    s3_client, bucket_name: str, file_keys: List[str]
+    s3_client, bucket_name: str, file_keys: List[str], url_ttl: int = 900
 ) -> List[Dict]:
     """
-    Return a list of dicts with image URL and GPS coordinates (if available).
-    Uses thumbnails/gps_data.json to cache previously computed GPS data in S3
-    AND an in-memory TTL cache to reduce S3 calls within the same process.
+    Return a list of dicts with *fresh* image URL and GPS coordinates (if available).
+    - Lat/Lon are cached in S3 (thumbnails/gps_data.json).
+    - Presigned URLs are generated on every call and NOT stored in S3.
     """
-    # ✅ First, check in-memory cache
+    # ✅ First, check in-memory lat/lon cache
     cache_key = (bucket_name, tuple(sorted(file_keys)))
     if cache_key in _gps_mem_cache:
-        return _gps_mem_cache[cache_key]
+        # Re-use lat/lon but refresh URLs each call
+        coords_only = _gps_mem_cache[cache_key]
+        images_with_gps = []
+        for item in coords_only:
+            thumb_key = get_thumbnail_key(item['key'])
+            fresh_url = s3_client.generate_presigned_url(
+                'get_object',
+                Params={'Bucket': bucket_name, 'Key': thumb_key},
+                ExpiresIn=url_ttl,
+            )
+            images_with_gps.append({**item, 'url': fresh_url})
+        return images_with_gps
 
     gps_cache_key = 'thumbnails/gps_data.json'
 
-    # --- Load existing cache from S3 (persistent layer) ---
+    # --- Load existing lat/lon cache from S3 ---
     try:
         obj = s3_client.get_object(Bucket=bucket_name, Key=gps_cache_key)
         gps_cache = json.load(obj['Body'])
@@ -1086,57 +1145,46 @@ def get_images_with_gps(
     except Exception:
         gps_cache = {}
 
-    updated = False  # flag to know if we need to write back
+    updated = False  # track if we need to write back
 
     def _convert_to_degrees(value):
         d, m, s = value
         return float(d) + float(m) / 60 + float(s) / 3600
 
     for key in file_keys:
-        # Skip if already cached with lat/lon
-        if key in gps_cache and 'lat' in gps_cache[key] and 'lon' in gps_cache[key]:
+        # Skip if we already have lat/lon
+        if key in gps_cache and all(k in gps_cache[key] for k in ('lat', 'lon')):
             continue
 
-        # Fetch image once to extract GPS
+        # Extract GPS from image if needed
         try:
             obj = s3_client.get_object(Bucket=bucket_name, Key=key)
             img_bytes = obj['Body'].read()
             img = Image.open(io.BytesIO(img_bytes))
             exif_data = img._getexif() or {}
-            exif = {
-                ExifTags.TAGS.get(tag, tag): value for tag, value in exif_data.items()
-            }
+            exif = {ExifTags.TAGS.get(t, t): v for t, v in exif_data.items()}
             gps_info = exif.get('GPSInfo')
             if not gps_info:
                 continue
 
             gps_tags = {ExifTags.GPSTAGS.get(t, t): v for t, v in gps_info.items()}
-            lat_ref = gps_tags.get('GPSLatitudeRef', 'N')
-            lon_ref = gps_tags.get('GPSLongitudeRef', 'E')
             if 'GPSLatitude' not in gps_tags or 'GPSLongitude' not in gps_tags:
                 continue
 
             lat = _convert_to_degrees(gps_tags['GPSLatitude'])
             lon = _convert_to_degrees(gps_tags['GPSLongitude'])
-            if lat_ref == 'S':
+            if gps_tags.get('GPSLatitudeRef', 'N') == 'S':
                 lat = -lat
-            if lon_ref == 'W':
+            if gps_tags.get('GPSLongitudeRef', 'E') == 'W':
                 lon = -lon
 
-            # Use thumbnail key instead of original key
-            thumb_key = get_thumbnail_key(key)
-            url = s3_client.generate_presigned_url(
-                'get_object',
-                Params={'Bucket': bucket_name, 'Key': thumb_key},
-                ExpiresIn=3600,
-            )
-
-            gps_cache[key] = {'lat': lat, 'lon': lon, 'url': url}
+            # ✅ Store only coordinates in persistent cache
+            gps_cache[key] = {'lat': lat, 'lon': lon}
             updated = True
         except Exception as e:
             print(f'Error processing {key}: {e}')
 
-    # --- Persist back to S3 if new data added ---
+    # --- Persist new lat/lon if needed ---
     if updated:
         try:
             gps_json_bytes = json.dumps(gps_cache).encode('utf-8')
@@ -1146,58 +1194,62 @@ def get_images_with_gps(
         except Exception as e:
             print(f'Error updating gps_data.json: {e}')
 
-    # --- Build final list (refresh URLs if missing) ---
+    # --- Build final list with fresh URLs ---
+    coords_only = []
     images_with_gps = []
     for key in file_keys:
         data = gps_cache.get(key)
-        if not data or 'lat' not in data or 'lon' not in data:
+        if not data:
             continue
 
-        if 'url' not in data:
-            data['url'] = s3_client.generate_presigned_url(
-                'get_object', Params={'Bucket': bucket_name, 'Key': key}, ExpiresIn=3600
-            )
-            gps_cache[key] = data
-            updated = True
+        coords_only.append({'key': key, 'lat': data['lat'], 'lon': data['lon']})
 
+        thumb_key = get_thumbnail_key(key)
+        fresh_url = s3_client.generate_presigned_url(
+            'get_object',
+            Params={'Bucket': bucket_name, 'Key': thumb_key},
+            ExpiresIn=url_ttl,
+        )
         images_with_gps.append(
-            {'key': key, 'url': data['url'], 'lat': data['lat'], 'lon': data['lon']}
+            {'key': key, 'lat': data['lat'], 'lon': data['lon'], 'url': fresh_url}
         )
 
-    # If we added URLs but didn’t write earlier
-    if updated:
-        try:
-            gps_json_bytes = json.dumps(gps_cache).encode('utf-8')
-            s3_client.put_object(
-                Bucket=bucket_name, Key=gps_cache_key, Body=gps_json_bytes
-            )
-        except Exception as e:
-            print(f'Error updating gps_data.json (URL refresh): {e}')
-
-    # ✅ Save to in-memory TTL cache for subsequent calls
-    _gps_mem_cache[cache_key] = images_with_gps
+    # ✅ Cache only coordinates in memory for faster subsequent calls
+    _gps_mem_cache[cache_key] = coords_only
 
     return images_with_gps
 
 
-def build_gallery_map_with_gps(images_with_gps, selected_key=None):
+def build_gallery_map_with_gps(
+    images_with_gps: list[dict], selected_key: str | None = None
+):
+    """
+    Build a Dash layout with a Mapbox scatter plot of images that have GPS coordinates.
+    - images_with_gps must contain dicts with keys: ['key', 'lat', 'lon', 'url']
+    - selected_key highlights the currently selected image (if any).
+    """
     if not images_with_gps:
         return html.Div('No images with GPS data.')
 
+    # Filter to valid coordinates
     images_with_coords = [
-        img for img in images_with_gps if 'lat' in img and 'lon' in img
+        img
+        for img in images_with_gps
+        if isinstance(img.get('lat'), (int, float))
+        and isinstance(img.get('lon'), (int, float))
     ]
     if not images_with_coords:
         return html.Div('No images with GPS data.')
 
+    # Prepare data
     lats = [img['lat'] for img in images_with_coords]
     lons = [img['lon'] for img in images_with_coords]
     keys = [img['key'] for img in images_with_coords]
-    filenames = [k.split('/')[-1] for k in keys]
+    filenames = [key.split('/')[-1] for key in keys]
+    urls = [img['url'] for img in images_with_coords]
+    colors = ['green' if key == selected_key else 'blue' for key in keys]
 
-    # Marker colors: green if selected, else blue
-    colors = ['green' if k == selected_key else 'blue' for k in keys]
-
+    # Create the map figure
     fig = go.Figure(
         go.Scattermapbox(
             lat=lats,
@@ -1206,7 +1258,8 @@ def build_gallery_map_with_gps(images_with_gps, selected_key=None):
             marker=go.scattermapbox.Marker(size=14, color=colors),
             hovertext=filenames,
             hoverinfo='text',
-            customdata=[img.get('url') for img in images_with_coords],
+            # ✅ Pass fresh presigned URLs as customdata for callbacks
+            customdata=urls,
         )
     )
 
@@ -1220,10 +1273,11 @@ def build_gallery_map_with_gps(images_with_gps, selected_key=None):
         hovermode='closest',
     )
 
+    # Layout container: map on the left, preview on the right
     return html.Div(
         style={
             'display': 'flex',
-            'flexWrap': 'wrap',  # allow items to wrap on small screens
+            'flexWrap': 'wrap',  # responsive wrapping on small screens
             'gap': '20px',
             'width': '100%',
         },
@@ -1235,15 +1289,17 @@ def build_gallery_map_with_gps(images_with_gps, selected_key=None):
                     'flex': '2 1 400px',  # grow/shrink, base width 400px
                     'minWidth': '300px',
                 },
+                config={'displayModeBar': False},  # cleaner look
             ),
             html.Div(
                 id='map-image-preview',
                 style={
-                    'flex': '1 1 300px',  # grow/shrink, base width 300px
+                    'flex': '1 1 300px',
                     'minWidth': '200px',
                     'display': 'flex',
                     'alignItems': 'center',
                     'justifyContent': 'center',
+                    'padding': '10px',
                 },
                 children='Click a marker to preview the image.',
             ),
@@ -1270,5 +1326,19 @@ def _cached_list_s3_folders(s3_client, bucket_name: str):
 
 def invalidate_s3_cache(bucket_name: str, folder_name: Optional[str] = None):
     """Clear cached results for a specific bucket/folder."""
+    # Invalidate folder listing cache
     _s3_cache.pop(hashkey('list_s3_folders', bucket_name), None)
-    _s3_cache.pop(hashkey('list_files_in_s3', bucket_name, folder_name), None)
+
+    # Normalize folder_name: treat "" and None the same
+    folder_key = folder_name if folder_name else None
+    _s3_cache.pop(hashkey('list_files_in_s3', bucket_name, folder_key), None)
+
+
+def list_root_files(s3_client, bucket_name):
+    """Return only files at the root (top-level) of the bucket."""
+    response = s3_client.list_objects_v2(
+        Bucket=bucket_name,
+        Delimiter='/',
+    )
+    files = response.get('Contents', [])
+    return [obj['Key'] for obj in files if not obj['Key'].endswith('/')]
