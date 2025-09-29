@@ -3,14 +3,20 @@ services:
     image: 376129839585.dkr.ecr.eu-west-3.amazonaws.com/dashlab:${IMAGE_TAG}
     env_file: ".env"
     environment:
-      - PYTHONPATH=/usr/src/app/src
-      - DASH_ENV="production"
-      - DASH_DEBUG=False
+      PYTHONPATH: /usr/src/app/src
+      DASH_ENV: production
+      DASH_DEBUG: "false"
     ports:
       - "7777:7777"
     restart: always
     networks:
       - dashnet
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:7777/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
 
   splitbox-api-prod:
     container_name: splitbox-api-container
@@ -26,6 +32,16 @@ services:
       -b 0.0.0.0:8888 --workers 2
     env_file:
       - ".env"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          'python3 -c ''import urllib.request; urllib.request.urlopen("http://localhost:8888/health")''',
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
 
   mongo:
     image: mongo:latest # Official MongoDB image

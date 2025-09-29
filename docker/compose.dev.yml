@@ -32,6 +32,16 @@ services:
       -b 0.0.0.0:8888 --workers 2 --timeout 300
     env_file:
       - "../.env"
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          'python3 -c ''import urllib.request; urllib.request.urlopen("http://localhost:8888/health")''',
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
 
   dashlab-prod:
     container_name: dashlab-prod-container
@@ -49,10 +59,16 @@ services:
     env_file:
       - "../.env"
     environment:
-      - PYTHONPATH=/usr/src/app/src
-      - DASH_ENV="production"
-      - DASH_DEBUG=False
+      PYTHONPATH: /usr/src/app/src
+      DASH_ENV: "production"
+      DASH_DEBUG: "false"
     restart: always
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:7777/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s
 
   mongo:
     image: mongo:latest # Official MongoDB image

@@ -26,6 +26,9 @@ COPY --from=ghcr.io/astral-sh/uv:0.7.21 /uv /uvx /bin/
 
 WORKDIR /usr/src/app
 
+# Install curl for healthchecks
+RUN apt-get update && apt-get install -y curl && rm -rf /var/lib/apt/lists/*
+
 # Copy prod dependency file only
 COPY pyproject.toml ./
 
@@ -37,4 +40,7 @@ COPY . .
 
 EXPOSE 7777
 
-CMD ["gunicorn", "-b", "0.0.0.0:7777", "app.api.dashboard:server"]
+# This command was single thread, making the app freeze too much
+# CMD ["gunicorn", "-b", "0.0.0.0:7777", "app.api.dashboard:server"]
+
+CMD ["gunicorn","--workers","2","--threads","4","--worker-class","gthread","--timeout","120","--keep-alive","30","--log-level","warning","-b","0.0.0.0:7777","app.api.dashboard:server"]
