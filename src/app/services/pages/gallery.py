@@ -60,6 +60,44 @@ layout = html.Div(
 )
 
 
+def build_upload_tab():
+    return html.Div(
+        [
+            html.H5('Upload Files to Selected Folder:'),
+            dcc.Upload(
+                id='gallery-upload-files',
+                children=dbc.Button(
+                    [html.I(className='bi bi-upload me-2'), 'Select Files'],
+                    color='primary',
+                    outline=False,
+                    size='lg',
+                    className='d-flex align-items-center',
+                ),
+                multiple=True,
+            ),
+            dcc.Store(id='gallery-presigned-data', storage_type='memory'),
+            html.Div(id='gallery-rename-files-container'),
+            html.Div(
+                id='gallery-upload-progress-container', style={'marginTop': '10px'}
+            ),
+            html.Br(),
+            html.Br(),
+            dbc.Button(
+                id='confirm-upload-btn',
+                children=[
+                    html.I(className='bi bi-upload me-2'),
+                    'Upload Renamed Files',
+                ],
+                color='primary',
+                outline=False,
+                size='lg',
+                className='d-flex align-items-center',
+            ),
+            html.Div(id='gallery-upload-status', style={'marginTop': '10px'}),
+        ]
+    )
+
+
 @callback(Output('gallery-auth-banner', 'children'), Input('url', 'pathname'))
 def update_auth_banner(_):
     try:
@@ -257,52 +295,7 @@ def update_auth_banner(_):
                                     },
                                 ),
                                 html.Hr(),
-                                html.Div(
-                                    [
-                                        html.H5('Upload Files to Selected Folder:'),
-                                        dcc.Upload(
-                                            id='gallery-upload-files',
-                                            children=dbc.Button(
-                                                [
-                                                    html.I(
-                                                        className='bi bi-upload me-2'
-                                                    ),  # Bootstrap icon
-                                                    'Select Files',
-                                                ],
-                                                color='primary',
-                                                outline=False,
-                                                size='lg',
-                                                className='d-flex align-items-center',
-                                            ),
-                                            multiple=True,
-                                        ),
-                                        dcc.Store(
-                                            id='gallery-presigned-data',
-                                            storage_type='memory',
-                                        ),
-                                        html.Div(id='gallery-rename-files-container'),
-                                        html.Br(),
-                                        html.Br(),
-                                        dbc.Button(
-                                            id='confirm-upload-btn',
-                                            children=[
-                                                html.I(
-                                                    className='bi bi-upload me-2'
-                                                ),  # Bootstrap icon
-                                                'Upload Renamed Files',
-                                            ],
-                                            color='primary',
-                                            outline=False,
-                                            size='lg',
-                                            className='d-flex align-items-center',
-                                        ),
-                                        html.Div(
-                                            id='gallery-upload-status',
-                                            style={'marginTop': '10px'},
-                                        ),
-                                    ]
-                                ),
-                                html.Hr(),
+                                build_upload_tab(),
                                 html.Div(
                                     id='bucket-gallery-container'
                                 ),  # This will hold the dynamic gallery
@@ -732,64 +725,127 @@ def show_default_gallery(_):
 
 
 @callback(
-    Output('gallery-presigned-data', 'data'),  # store only
+    Output('gallery-presigned-data', 'data'),
     Input('confirm-upload-btn', 'n_clicks'),
     State('gallery-upload-files', 'filename'),
+    State({'type': 'rename-file', 'index': ALL}, 'value'),
     State('gallery-folder-dropdown', 'value'),
     State('gallery-new-folder-input', 'value'),
     State('gallery-bucket-selector', 'value'),
     prevent_initial_call=True,
 )
-def get_presigned_uploads(n_clicks, filenames, folder, new_folder, bucket_name):
-    if not filenames:
+def get_presigned_uploads(
+    n_clicks, original_filenames, rename_inputs, folder, new_folder, bucket_name
+):
+    if not original_filenames:
         raise PreventUpdate
-    target_folder = new_folder or folder or ''
+
+    # Build final filenames with new names + original extensions
+    final_names = []
+    for i, orig in enumerate(original_filenames):
+        ext = os.path.splitext(orig)[1]
+        new_base = (
+            rename_inputs[i].strip()
+            if rename_inputs and i < len(rename_inputs)
+            else os.path.splitext(orig)[0]
+        )
+        final_names.append(f'{new_base}{ext}')
+
+    target_folder = (new_folder or folder or '').strip()
     s3_client = get_s3_client(bucket_name)
 
+    # Generate presigned uploads with FINAL names
     presigned_posts = generate_presigned_uploads(
-        s3_client, bucket_name, filenames, target_folder
+        s3_client, bucket_name, final_names, target_folder
     )
-    return presigned_posts  # store only
+    return presigned_posts
 
 
 dash_clientside_callback = dash.clientside_callback
 
 dash_clientside_callback(
     """
-    function(presignedData, fileContents, filenames) {
-        if (!presignedData || !fileContents || !filenames) return '';
+function uploadFilesWithProgress(presignedData, fileContents, finalNames) {
+    if (!presignedData || !fileContents || !finalNames) return '';
 
-        presignedData.forEach((data, idx) => {
-            const fileContent = fileContents[idx];
-            const byteString = atob(fileContent.split(',')[1]);
-            const arrayBuffer = new ArrayBuffer(byteString.length);
-            const uintArray = new Uint8Array(arrayBuffer);
-            for (let i = 0; i < byteString.length; i++) {
-                uintArray[i] = byteString.charCodeAt(i);
+    let statusDiv = document.getElementById('gallery-upload-status');
+    statusDiv.innerHTML = ''; // Clear previous messages
+
+    presignedData.forEach((data, idx) => {
+        const displayName = finalNames[idx];
+        const fileContent = fileContents[idx];
+        const byteString = atob(fileContent.split(',')[1]);
+        const arrayBuffer = new ArrayBuffer(byteString.length);
+        const uintArray = new Uint8Array(arrayBuffer);
+        for (let i = 0; i < byteString.length; i++) {
+            uintArray[i] = byteString.charCodeAt(i);
+        }
+        const blob = new Blob([uintArray], { type: 'application/octet-stream' });
+
+        // Create progress bar
+        const wrapper = document.createElement('div');
+        const label = document.createElement('div');
+        label.innerText = `Uploading ${displayName}: 0%`;
+        const progress = document.createElement('div');
+        progress.className = 'progress';
+        const bar = document.createElement('div');
+        bar.className = 'progress-bar progress-bar-striped progress-bar-animated';
+        bar.setAttribute('role', 'progressbar');
+        bar.setAttribute('aria-valuemin', '0');
+        bar.setAttribute('aria-valuemax', '100');
+        bar.style.width = '0%';
+        progress.appendChild(bar);
+        wrapper.appendChild(label);
+        wrapper.appendChild(progress);
+        statusDiv.appendChild(wrapper);
+
+        // Send file with XMLHttpRequest
+        const xhr = new XMLHttpRequest();
+        xhr.open('POST', data.presigned_post.url);
+
+        xhr.upload.addEventListener('progress', (e) => {
+            if (e.lengthComputable) {
+                let percent = Math.round((e.loaded / e.total) * 100);
+                label.innerText = `Uploading ${filenames[idx]}: ${percent}%`;
+                bar.style.width = percent + '%';
             }
-            const blob = new Blob([uintArray], { type: 'application/octet-stream' });
-
-            const formData = new FormData();
-            Object.entries(data.presigned_post.fields).forEach(([k,v]) => {
-                formData.append(k, v);
-            });
-            formData.append('file', blob, data.filename);
-
-            fetch(data.presigned_post.url, {
-                method: 'POST',
-                body: formData
-            }).then(resp => {
-                if (!resp.ok) console.error('Upload failed for', data.filename);
-            }).catch(err => console.error(err));
         });
 
-        return 'Files are being uploaded directly to S3!';
+xhr.onload = () => {
+    if (xhr.status >= 200 && xhr.status < 300) {
+        label.innerText = `✅ Uploaded ${displayName}`;
+        bar.style.width = '100%';
+        // Remove animation
+        bar.classList.remove('progress-bar-animated', 'progress-bar-striped');
+        bar.classList.add('bg-success');  // optional green
+    } else {
+        label.innerText = `❌ Failed ${displayName}`;
+        bar.classList.remove('progress-bar-animated', 'progress-bar-striped');
+        bar.classList.add('bg-danger');
     }
+};
+
+xhr.onerror = () => {
+    label.innerText = `❌ Failed ${displayName}`;
+    bar.classList.remove('progress-bar-animated', 'progress-bar-striped');
+    bar.classList.add('bg-danger');
+};
+
+        const formData = new FormData();
+        Object.entries(data.presigned_post.fields).forEach(([k,v]) => formData.append(k,v));
+        formData.append('file', blob, data.filename);
+
+        xhr.send(formData);
+    });
+
+    return '';
+}
     """,
     Output('gallery-upload-status', 'children'),
     Input('gallery-presigned-data', 'data'),
     State('gallery-upload-files', 'contents'),
-    State('gallery-upload-files', 'filename'),
+    # ✅ Use the rename inputs instead of the raw filenames
+    State({'type': 'rename-file', 'index': ALL}, 'value'),
 )
 
 
