@@ -44,6 +44,7 @@ logger = logging.getLogger(__name__)
 # --- Configuration constants ---
 DEBUG_MODE = settings.debug
 DASH_ENV = settings.env
+LOCAL_NO_AUTH = settings.local_no_auth
 COGNITO_SCOPE = ['openid', 'email', 'profile']
 
 # --- Cognito OAuth endpoints ---
@@ -149,7 +150,17 @@ def is_approved():
 
 
 def is_logged_in_and_approved():
-    """Return True if user is logged in and approved."""
+    if LOCAL_NO_AUTH:
+        # stub a fake approved user with splitbox access
+        if 'user' not in session:
+            session['user'] = {
+                'username': 'localuser',
+                'custom:approved': 'true',
+                'custom:splitbox-access': 'true',
+            }
+            session['ALLOWED_BUCKETS'] = {'splitbox-bucket': 'us-east-1'}
+            session['DEFAULT_BUCKET'] = 'splitbox-bucket'
+        return True
     return is_logged_in() and is_approved()
 
 
@@ -170,6 +181,10 @@ def require_login():
     if request.path in exact_allowed_paths or any(
         request.path.startswith(p) for p in prefix_allowed_paths
     ):
+        return
+
+    if LOCAL_NO_AUTH:
+        # allow all routes locally without authentication
         return
 
     if not is_logged_in_and_approved():
@@ -225,13 +240,25 @@ def navbar():
     img_tag = html.Img(
         src='assets/PG.png', width=27, className='d-inline-block align-text-middle me-2'
     )
+
+    user = session.get('user', {})
+
+    # Get a display name
+    username = (
+        user.get('username')
+        or user.get('cognito:username')  # returned by Cognito token
+        or 'DashLab'  # fallback default
+    )
+
+    # Short description
+    display_name = f'User: {username}' if username != 'DashLab' else username
+
     brand_link = dcc.Link(
-        [img_tag, 'DashLab'],
+        [img_tag, display_name],
         href='/',
         className='navbar-brand d-flex align-items-center',
     )
 
-    # use html.A instead of dcc.Link
     logout_link = html.A(
         'Logout',
         href='/logout',

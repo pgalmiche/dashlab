@@ -23,6 +23,22 @@ Check out my personal website at 👉 [https://pierregalmiche.link](https://pier
 
 ______________________________________________________________________
 
+## 📁 .env Configuration
+
+This project relies on environment variables to manage secrets and configuration.
+
+- Use `.env.template` as a reference
+- Copy it to `.env` and fill in your values:
+
+```bash
+cp .env.template .env
+```
+
+Ensure you complete the required fields before starting the dashboard or running builds/tests.
+For splitbox devs, you should have LOCAL_NO_AUTH=True, you only need to add the S3 credentials to have access to the "splitbox-bucket".
+
+______________________________________________________________________
+
 ## 📦 Usage
 
 These helper scripts ensure consistent usage across environments:
@@ -89,21 +105,6 @@ bash ./scripts/precommit-hook-install.sh
 ```
 
 This installs hooks that enforce code quality (e.g., linting, formatting) before any commit. The hooks run inside a containerized environment, ensuring all contributors use the same tooling.
-
-______________________________________________________________________
-
-## 📁 .env Configuration
-
-This project relies on environment variables to manage secrets and configuration.
-
-- Use `.env.template` as a reference
-- Copy it to `.env` and fill in your values:
-
-```bash
-cp .env.template .env
-```
-
-Ensure you complete the required fields before starting the dashboard or running builds/tests.
 
 ______________________________________________________________________
 

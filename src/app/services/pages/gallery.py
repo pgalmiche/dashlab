@@ -53,6 +53,20 @@ layout = html.Div(
                 html.Div(
                     id='gallery-auth-banner', className='mb-4'
                 ),  # Dynamic auth banner here
+                html.Div(
+                    dcc.Dropdown(
+                        id='map-view-dropdown',
+                        options=[
+                            {
+                                'label': 'Current folder',
+                                'value': 'folder',
+                            }
+                        ],
+                        value='folder',
+                        clearable=False,
+                    ),
+                    style={'display': 'none'},  # invisible but present in layout
+                ),
             ],
         ),
     ],
@@ -155,22 +169,6 @@ def update_auth_banner(_):
                             [
                                 html.H2(
                                     'S3 File Gallery 📸', className='mb-4 text-center'
-                                ),
-                                html.Div(
-                                    dcc.Dropdown(
-                                        id='map-view-dropdown',
-                                        options=[
-                                            {
-                                                'label': 'Current folder',
-                                                'value': 'folder',
-                                            }
-                                        ],
-                                        value='folder',
-                                        clearable=False,
-                                    ),
-                                    style={
-                                        'display': 'none'
-                                    },  # invisible but present in layout
                                 ),
                                 dbc.Row(
                                     [

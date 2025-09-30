@@ -69,6 +69,7 @@ class Settings(BaseSettings):
 
     # CI/CD env
     image_tag: str = Field(default='latest', alias='IMAGE_TAG')
+    local_no_auth: bool = Field(default=False, alias='LOCAL_NO_AUTH')
 
     model_config = ConfigDict(env_file='.env', extra='forbid', frozen=True)
 

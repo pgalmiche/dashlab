@@ -183,10 +183,10 @@ def update_auth_banner(_):
                                                 id='splitbox-action-tabs',
                                                 value='upload',  # default tab
                                                 children=[
-                                                    # ---------------- UPLOAD TAB ----------------
+                                                    # ---------------- LOAD TAB ----------------
                                                     dcc.Tab(
-                                                        label='📤 Upload',
-                                                        value='upload',
+                                                        label='📥 Load',
+                                                        value='load',
                                                         children=html.Div(
                                                             style={
                                                                 'padding': '20px',
@@ -197,50 +197,41 @@ def update_auth_banner(_):
                                                             },
                                                             children=[
                                                                 html.H3(
-                                                                    'Upload from your device:',
+                                                                    'Load a saved file:',
                                                                     className='fw-bold mb-3',
                                                                 ),
                                                                 html.Label(
-                                                                    'Select folder to save or create a new one:'
+                                                                    'Select a splitbox folder:'
                                                                 ),
                                                                 dcc.Dropdown(
-                                                                    id='splitbox-save-folder-selector',
+                                                                    id='splitbox-folder-selector',
                                                                     options=[],
-                                                                    placeholder='Select folder',
+                                                                    placeholder='Select a folder',
                                                                     clearable=True,
                                                                     style={
                                                                         'width': '100%'
                                                                     },
                                                                 ),
-                                                                dcc.Input(
-                                                                    id='splitbox-new-folder-name',
-                                                                    type='text',
-                                                                    placeholder='Or enter new folder name',
-                                                                    style={
-                                                                        'width': '100%'
-                                                                    },
-                                                                ),
                                                                 html.Label(
-                                                                    'Add tags for the file (comma separated):'
+                                                                    'Select an audio file to work on:'
                                                                 ),
-                                                                dcc.Input(
-                                                                    id='splitbox-file-tags',
-                                                                    type='text',
-                                                                    placeholder='tag1, tag2, ...',
+                                                                dcc.Dropdown(
+                                                                    id='splitbox-file-selector',
+                                                                    placeholder='Select a file',
                                                                     style={
                                                                         'width': '100%'
                                                                     },
-                                                                ),
-                                                                dcc.Upload(
-                                                                    id='splitbox-upload-file',
-                                                                    children=html.Button(
-                                                                        'Upload your beatbox file here',
-                                                                        id='upload-button',
-                                                                    ),
-                                                                    multiple=False,
+                                                                    clearable=True,
                                                                 ),
                                                                 html.Div(
-                                                                    id='splitbox-upload-status'
+                                                                    id='splitbox-delete-file-status',
+                                                                    className='mt-2 text-info',
+                                                                ),
+                                                                dcc.Store(
+                                                                    id='splitbox-refresh-files'
+                                                                ),
+                                                                dcc.Store(
+                                                                    id='splitbox-refresh-recordings'
                                                                 ),
                                                             ],
                                                         ),
@@ -301,10 +292,10 @@ def update_auth_banner(_):
                                                             ],
                                                         ),
                                                     ),
-                                                    # ---------------- LOAD TAB ----------------
+                                                    # ---------------- UPLOAD TAB ----------------
                                                     dcc.Tab(
-                                                        label='📥 Load',
-                                                        value='load',
+                                                        label='📤 Upload',
+                                                        value='upload',
                                                         children=html.Div(
                                                             style={
                                                                 'padding': '20px',
@@ -315,41 +306,50 @@ def update_auth_banner(_):
                                                             },
                                                             children=[
                                                                 html.H3(
-                                                                    'Load a saved file:',
+                                                                    'Upload from your device:',
                                                                     className='fw-bold mb-3',
                                                                 ),
                                                                 html.Label(
-                                                                    'Select a splitbox folder:'
+                                                                    'Select folder to save or create a new one:'
                                                                 ),
                                                                 dcc.Dropdown(
-                                                                    id='splitbox-folder-selector',
+                                                                    id='splitbox-save-folder-selector',
                                                                     options=[],
-                                                                    placeholder='Select a folder',
+                                                                    placeholder='Select folder',
                                                                     clearable=True,
+                                                                    style={
+                                                                        'width': '100%'
+                                                                    },
+                                                                ),
+                                                                dcc.Input(
+                                                                    id='splitbox-new-folder-name',
+                                                                    type='text',
+                                                                    placeholder='Or enter new folder name',
                                                                     style={
                                                                         'width': '100%'
                                                                     },
                                                                 ),
                                                                 html.Label(
-                                                                    'Select an audio file to work on:'
+                                                                    'Add tags for the file (comma separated):'
                                                                 ),
-                                                                dcc.Dropdown(
-                                                                    id='splitbox-file-selector',
-                                                                    placeholder='Select a file',
+                                                                dcc.Input(
+                                                                    id='splitbox-file-tags',
+                                                                    type='text',
+                                                                    placeholder='tag1, tag2, ...',
                                                                     style={
                                                                         'width': '100%'
                                                                     },
-                                                                    clearable=True,
+                                                                ),
+                                                                dcc.Upload(
+                                                                    id='splitbox-upload-file',
+                                                                    children=html.Button(
+                                                                        'Upload your beatbox file here',
+                                                                        id='upload-button',
+                                                                    ),
+                                                                    multiple=False,
                                                                 ),
                                                                 html.Div(
-                                                                    id='splitbox-delete-file-status',
-                                                                    className='mt-2 text-info',
-                                                                ),
-                                                                dcc.Store(
-                                                                    id='splitbox-refresh-files'
-                                                                ),
-                                                                dcc.Store(
-                                                                    id='splitbox-refresh-recordings'
+                                                                    id='splitbox-upload-status'
                                                                 ),
                                                             ],
                                                         ),
@@ -971,7 +971,7 @@ def show_or_run_analysis(file_key, n_clicks):
     # --- Run analysis if button clicked ---
     elif triggered_id == 'run-analyze-btn' and n_clicks > 0:
         try:
-            # ✅ Compute output path using the same utility
+            # Compute output path using the same utility
             prefix = get_analysis_prefix(file_key, username)
             output_path = f's3://splitbox-bucket/{prefix}'
 
@@ -986,7 +986,7 @@ def show_or_run_analysis(file_key, n_clicks):
             if resp.status_code != 200:
                 return html.Div(f'❌ Error {resp.status_code}: {resp.text}'), False
 
-            # ✅ Just trigger a fresh S3 listing instead of looking for plot_file
+            # Just trigger a fresh S3 listing instead of looking for plot_file
             viz_keys = list_viz_files(
                 client, 'splitbox-bucket', file_key, username=username
             )
