@@ -2,6 +2,7 @@ import os
 from unittest.mock import MagicMock, patch
 
 import pytest
+from flask import session
 
 from app.api import dashboard
 from app.api.dashboard import server  # import Flask server
@@ -139,8 +140,12 @@ def test_update_navbar_logged_in(mocker, client):
     # Patch session to simulate logged-in and approved user
     mocker.patch('app.api.dashboard.is_logged_in_and_approved', return_value=True)
 
-    result = dashboard.update_navbar('/')
-    assert result is not None  # Should return navbar component
+    with client.application.test_request_context('/'):
+        # simulate a logged-in user in session
+        session['user'] = {'username': 'testuser'}
+
+        result = dashboard.update_navbar('/')
+        assert result is not None  # Should return navbar component
 
 
 def test_update_navbar_not_logged_in(mocker, client):

@@ -181,7 +181,7 @@ def update_auth_banner(_):
                                             # 🔹 TABS start here
                                             dcc.Tabs(
                                                 id='splitbox-action-tabs',
-                                                value='upload',  # default tab
+                                                value='load',  # default tab
                                                 children=[
                                                     # ---------------- LOAD TAB ----------------
                                                     dcc.Tab(
