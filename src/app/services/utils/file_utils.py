@@ -27,7 +27,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from functools import lru_cache
-from typing import Dict, List, Optional, Union
+from typing import List, Optional, Union
 
 import boto3
 import plotly.graph_objects as go
@@ -817,39 +817,24 @@ def extract_lat_lon(gps_data):
 
 
 def get_images_with_gps(
-    s3_client, bucket_name: str, file_keys: List[str], url_ttl: int = 900
-) -> List[Dict]:
+    s3_client, bucket_name: str, file_keys: list[str], url_ttl: int = 900
+) -> list[dict]:
     """
-    Return a list of dicts with *fresh* image URL and GPS coordinates (if available).
-    - Lat/Lon are cached in S3 (thumbnails/gps_data.json).
-    - Presigned URLs are generated on every call and NOT stored in S3.
+    Return a list of dicts with fresh presigned URLs and GPS coordinates (if available).
+    Caches GPS coordinates per file in memory for faster subsequent calls.
+    Presigned URLs are always fresh.
     """
-    # First, check in-memory lat/lon cache
-    cache_key = (bucket_name, tuple(sorted(file_keys)))
-    if cache_key in _gps_mem_cache:
-        # Re-use lat/lon but refresh URLs each call
-        coords_only = _gps_mem_cache[cache_key]
-        images_with_gps = []
-        for item in coords_only:
-            thumb_key = get_thumbnail_key(item['key'])
-            fresh_url = s3_client.generate_presigned_url(
-                'get_object',
-                Params={'Bucket': bucket_name, 'Key': thumb_key},
-                ExpiresIn=url_ttl,
-            )
-            images_with_gps.append({**item, 'url': fresh_url})
-        return images_with_gps
-
     gps_cache_key = 'thumbnails/gps_data.json'
+    images_with_gps = []
 
-    # --- Load existing lat/lon cache from S3 ---
+    # Load persistent GPS cache from S3
     try:
         obj = s3_client.get_object(Bucket=bucket_name, Key=gps_cache_key)
-        gps_cache = json.load(obj['Body'])
+        persistent_cache = json.load(obj['Body'])
     except s3_client.exceptions.NoSuchKey:
-        gps_cache = {}
+        persistent_cache = {}
     except Exception:
-        gps_cache = {}
+        persistent_cache = {}
 
     updated = False  # track if we need to write back
 
@@ -858,70 +843,76 @@ def get_images_with_gps(
         return float(d) + float(m) / 60 + float(s) / 3600
 
     for key in file_keys:
-        # Skip if we already have lat/lon
-        if key in gps_cache and all(k in gps_cache[key] for k in ('lat', 'lon')):
-            continue
+        file_cache_key = (bucket_name, key)
 
-        # Extract GPS from image if needed
-        try:
-            obj = s3_client.get_object(Bucket=bucket_name, Key=key)
-            img_bytes = obj['Body'].read()
-            img = Image.open(io.BytesIO(img_bytes))
-            exif_data = img._getexif() or {}
-            exif = {ExifTags.TAGS.get(t, t): v for t, v in exif_data.items()}
-            gps_info = exif.get('GPSInfo')
-            if not gps_info:
-                continue
+        # 1️⃣ Check in-memory cache
+        if file_cache_key in _gps_mem_cache:
+            latlon = _gps_mem_cache[file_cache_key]
+        # 2️⃣ Check persistent S3 cache
+        elif key in persistent_cache and all(
+            k in persistent_cache[key] for k in ('lat', 'lon')
+        ):
+            latlon = persistent_cache[key]
+            _gps_mem_cache[file_cache_key] = latlon
+        # 3️⃣ Extract GPS from image if not cached
+        else:
+            try:
+                obj = s3_client.get_object(Bucket=bucket_name, Key=key)
+                img_bytes = obj['Body'].read()
+                img = Image.open(io.BytesIO(img_bytes))
+                exif_data = img._getexif() or {}
+                exif = {ExifTags.TAGS.get(t, t): v for t, v in exif_data.items()}
+                gps_info = exif.get('GPSInfo')
+                if gps_info:
+                    gps_tags = {
+                        ExifTags.GPSTAGS.get(t, t): v for t, v in gps_info.items()
+                    }
+                    if 'GPSLatitude' in gps_tags and 'GPSLongitude' in gps_tags:
+                        lat = _convert_to_degrees(gps_tags['GPSLatitude'])
+                        lon = _convert_to_degrees(gps_tags['GPSLongitude'])
+                        if gps_tags.get('GPSLatitudeRef', 'N') == 'S':
+                            lat = -lat
+                        if gps_tags.get('GPSLongitudeRef', 'E') == 'W':
+                            lon = -lon
+                        latlon = {'lat': lat, 'lon': lon}
+                        _gps_mem_cache[file_cache_key] = latlon
+                        persistent_cache[key] = latlon
+                        updated = True
+                    else:
+                        latlon = None
+                else:
+                    latlon = None
+            except Exception as e:
+                print(f'Error processing {key}: {e}')
+                latlon = None
 
-            gps_tags = {ExifTags.GPSTAGS.get(t, t): v for t, v in gps_info.items()}
-            if 'GPSLatitude' not in gps_tags or 'GPSLongitude' not in gps_tags:
-                continue
+        # 4️⃣ Build presigned URL if GPS exists
+        if latlon:
+            thumb_key = get_thumbnail_key(key)
+            presigned_url = s3_client.generate_presigned_url(
+                'get_object',
+                Params={'Bucket': bucket_name, 'Key': thumb_key},
+                ExpiresIn=url_ttl,
+            )
+            images_with_gps.append(
+                {
+                    'key': key,
+                    'lat': latlon['lat'],
+                    'lon': latlon['lon'],
+                    'url': presigned_url,
+                }
+            )
 
-            lat = _convert_to_degrees(gps_tags['GPSLatitude'])
-            lon = _convert_to_degrees(gps_tags['GPSLongitude'])
-            if gps_tags.get('GPSLatitudeRef', 'N') == 'S':
-                lat = -lat
-            if gps_tags.get('GPSLongitudeRef', 'E') == 'W':
-                lon = -lon
-
-            # Store only coordinates in persistent cache
-            gps_cache[key] = {'lat': lat, 'lon': lon}
-            updated = True
-        except Exception as e:
-            print(f'Error processing {key}: {e}')
-
-    # --- Persist new lat/lon if needed ---
+    # Persist updated GPS cache to S3
     if updated:
         try:
-            gps_json_bytes = json.dumps(gps_cache).encode('utf-8')
             s3_client.put_object(
-                Bucket=bucket_name, Key=gps_cache_key, Body=gps_json_bytes
+                Bucket=bucket_name,
+                Key=gps_cache_key,
+                Body=json.dumps(persistent_cache).encode('utf-8'),
             )
         except Exception as e:
             print(f'Error updating gps_data.json: {e}')
-
-    # --- Build final list with fresh URLs ---
-    coords_only = []
-    images_with_gps = []
-    for key in file_keys:
-        data = gps_cache.get(key)
-        if not data:
-            continue
-
-        coords_only.append({'key': key, 'lat': data['lat'], 'lon': data['lon']})
-
-        thumb_key = get_thumbnail_key(key)
-        fresh_url = s3_client.generate_presigned_url(
-            'get_object',
-            Params={'Bucket': bucket_name, 'Key': thumb_key},
-            ExpiresIn=url_ttl,
-        )
-        images_with_gps.append(
-            {'key': key, 'lat': data['lat'], 'lon': data['lon'], 'url': fresh_url}
-        )
-
-    # Cache only coordinates in memory for faster subsequent calls
-    _gps_mem_cache[cache_key] = coords_only
 
     return images_with_gps
 

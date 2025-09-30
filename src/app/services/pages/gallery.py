@@ -89,6 +89,7 @@ def build_upload_tab():
                 multiple=True,
             ),
             dcc.Store(id='gallery-presigned-data', storage_type='memory'),
+            dcc.Store(id='gallery-upload-complete', data=False),
             html.Div(id='gallery-rename-files-container'),
             html.Div(
                 id='gallery-upload-progress-container', style={'marginTop': '10px'}
@@ -435,6 +436,7 @@ def filter_splitbox_folders(folders: list[str], username: str) -> list[str]:
     State({'type': 'move-folder-input', 'file_key': ALL}, 'value'),
     Input('map-view-dropdown', 'value'),
     State('gallery-active-tab', 'data'),
+    Input('gallery-upload-complete', 'data'),
     prevent_initial_call=True,
 )
 def manage_gallery(
@@ -452,6 +454,7 @@ def manage_gallery(
     move_inputs,
     map_view,
     active_tab,
+    upload_completed,
 ):
     triggered = ctx.triggered_id
     delete_status = ''
@@ -473,6 +476,10 @@ def manage_gallery(
         )
         # empty string for delete_status, keep dropdown options empty
         return msg, '', []
+
+    if triggered == 'gallery-upload-complete':
+        # Force rebuild with current folder/bucket/type
+        triggered = 'confirm-upload-btn'  # reuse upload logic
 
     if isinstance(triggered, dict) and triggered.get('type') == 'delete-file-btn':
         # DELETE
@@ -506,7 +513,6 @@ def manage_gallery(
 
         invalidate_s3_cache(bucket_name, folder)
         _presigned_cache.clear()
-        _gps_mem_cache.clear()
 
         # Warm presigned cache for images
         new_image_files = [
@@ -514,10 +520,15 @@ def manage_gallery(
             for name in filenames_to_upload
             if name.lower().endswith(('.png', '.jpg', '.jpeg'))
         ]
+
         if new_image_files:
             images_with_gps = get_images_with_gps(client, bucket_name, new_image_files)
             for img in images_with_gps:
                 _presigned_cache[img['key']] = img['url']
+                _gps_mem_cache[(bucket_name, img['key'])] = {
+                    'lat': img['lat'],
+                    'lon': img['lon'],
+                }
 
     # ---------- RENAME / MOVE ----------
     elif isinstance(triggered, dict) and triggered.get('type') == 'rename-file-btn':
@@ -849,7 +860,7 @@ function uploadFilesWithProgress(presignedData, fileContents, finalNames) {
     if (!presignedData || !fileContents || !finalNames) return '';
 
     let statusDiv = document.getElementById('gallery-upload-status');
-    statusDiv.innerHTML = ''; // Clear previous messages
+    statusDiv.innerHTML = '';
 
     presignedData.forEach((data, idx) => {
         const displayName = finalNames[idx];
@@ -862,7 +873,6 @@ function uploadFilesWithProgress(presignedData, fileContents, finalNames) {
         }
         const blob = new Blob([uintArray], { type: 'application/octet-stream' });
 
-        // Create progress bar
         const wrapper = document.createElement('div');
         const label = document.createElement('div');
         label.innerText = `Uploading ${displayName}: 0%`;
@@ -879,37 +889,43 @@ function uploadFilesWithProgress(presignedData, fileContents, finalNames) {
         wrapper.appendChild(progress);
         statusDiv.appendChild(wrapper);
 
-        // Send file with XMLHttpRequest
         const xhr = new XMLHttpRequest();
         xhr.open('POST', data.presigned_post.url);
 
         xhr.upload.addEventListener('progress', (e) => {
             if (e.lengthComputable) {
                 let percent = Math.round((e.loaded / e.total) * 100);
-                label.innerText = `Uploading ${filenames[idx]}: ${percent}%`;
+                label.innerText = `Uploading ${displayName}: ${percent}%`;
                 bar.style.width = percent + '%';
             }
         });
 
-xhr.onload = () => {
-    if (xhr.status >= 200 && xhr.status < 300) {
-        label.innerText = `✅ Uploaded ${displayName}`;
-        bar.style.width = '100%';
-        // Remove animation
-        bar.classList.remove('progress-bar-animated', 'progress-bar-striped');
-        bar.classList.add('bg-success');  // optional green
-    } else {
-        label.innerText = `❌ Failed ${displayName}`;
-        bar.classList.remove('progress-bar-animated', 'progress-bar-striped');
-        bar.classList.add('bg-danger');
-    }
-};
+        xhr.onload = () => {
+            if (xhr.status >= 200 && xhr.status < 300) {
+                label.innerText = `✅ Uploaded ${displayName}`;
+                bar.style.width = '100%';
+                bar.classList.remove('progress-bar-animated', 'progress-bar-striped');
+                bar.classList.add('bg-success');
+            } else {
+                label.innerText = `❌ Failed ${displayName}`;
+                bar.classList.remove('progress-bar-animated', 'progress-bar-striped');
+                bar.classList.add('bg-danger');
+            }
 
-xhr.onerror = () => {
-    label.innerText = `❌ Failed ${displayName}`;
-    bar.classList.remove('progress-bar-animated', 'progress-bar-striped');
-    bar.classList.add('bg-danger');
-};
+            // ⚡ When last file finishes, update the store
+            if (idx === presignedData.length - 1) {
+                const store = window.dash_clientside && window.dash_clientside.callback_context
+                if(store){
+                    window.dash_clientside.store = true
+                }
+            }
+        };
+
+        xhr.onerror = () => {
+            label.innerText = `❌ Failed ${displayName}`;
+            bar.classList.remove('progress-bar-animated', 'progress-bar-striped');
+            bar.classList.add('bg-danger');
+        };
 
         const formData = new FormData();
         Object.entries(data.presigned_post.fields).forEach(([k,v]) => formData.append(k,v));
@@ -918,13 +934,12 @@ xhr.onerror = () => {
         xhr.send(formData);
     });
 
-    return '';
+    return true;  // set the store to True when upload starts (or finishes)
 }
     """,
-    Output('gallery-upload-status', 'children'),
+    Output('gallery-upload-complete', 'data'),
     Input('gallery-presigned-data', 'data'),
     State('gallery-upload-files', 'contents'),
-    # ✅ Use the rename inputs instead of the raw filenames
     State({'type': 'rename-file', 'index': ALL}, 'value'),
 )
 

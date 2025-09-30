@@ -1,0 +1,4 @@
+services:
+  splitbox-api-prod:
+    image: splitbox-api-prod:latest
+    container_name: splitbox-local-prod-container

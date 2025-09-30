@@ -43,14 +43,27 @@ ______________________________________________________________________
 
 These helper scripts ensure consistent usage across environments:
 
-- **Development start**
+- **DashLab Development start**
 
   ```bash
-  bash ./scripts/dev-start.sh
+  bash ./scripts/dev-prod-splitbox.sh
   ```
 
   Launches the dashboard in a local development environment.
-  Then, open your browser and visit: [http://0.0.0.0:7777](http://0.0.0.0:7777)
+  Then, open your browser and visit: [http://0.0.0.0:7777](http://0.0.0.0:7777).
+  This will show you the dashboard and run the production splitbox image to be called from dashlab frontend.
+
+- **DashLab+Splitbox Development start**
+
+  ```bash
+  bash ./scripts/dev-local-splitbox.sh
+  ```
+
+  Launches the dashboard in a local development environment.
+  Then, open your browser and visit: [http://0.0.0.0:7777](http://0.0.0.0:7777).
+  This will show you the dashboard and run the local splitbox image to be called from dashlab frontend.
+  This time, the image used is not the one stored on DockerHub, but the one generated from your splitbox project.
+  As the image is generated and exists locally, you will be able to test your splitbox features on the dashlab frontend without pushing them first online.
 
 - **Build production image** (for local test if you want)
 
