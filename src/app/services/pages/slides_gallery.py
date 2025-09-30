@@ -6,7 +6,7 @@ import requests
 from bs4 import BeautifulSoup
 from dash import Input, Output, callback, html
 
-from app.services.utils.file_utils import card_style
+from app.services.utils.ui_utils import card_style
 from config.logging import setup_logging
 from config.settings import settings
 

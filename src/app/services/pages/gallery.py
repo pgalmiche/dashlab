@@ -13,7 +13,6 @@ from app.services.utils.file_utils import (
     _cached_list_files_in_s3,
     _gps_mem_cache,
     _presigned_cache,
-    build_gallery_layout,
     build_gallery_map_with_gps,
     delete_file_from_s3,
     filter_files_by_type,
@@ -28,7 +27,7 @@ from app.services.utils.file_utils import (
     list_s3_folders,
     upload_files_to_s3,
 )
-from app.services.utils.ui_utils import bucket_dropdown
+from app.services.utils.ui_utils import bucket_dropdown, build_gallery_layout
 from config.logging import setup_logging
 from config.settings import settings
 
@@ -145,7 +144,7 @@ def update_auth_banner(_):
                 return html.Div(
                     [
                         html.Div(
-                            className='alert alert-success',
+                            className='alert alert-success mb-4',
                             children=[
                                 '✅ You are logged in.',
                                 html.Br(),
@@ -153,154 +152,184 @@ def update_auth_banner(_):
                             ],
                         ),
                         html.Div(
-                            children=[
-                                html.H2('S3 File Gallery 📸'),
+                            [
+                                html.H2(
+                                    'S3 File Gallery 📸', className='mb-4 text-center'
+                                ),
                                 html.Div(
+                                    dcc.Dropdown(
+                                        id='map-view-dropdown',
+                                        options=[
+                                            {
+                                                'label': 'Current folder',
+                                                'value': 'folder',
+                                            }
+                                        ],
+                                        value='folder',
+                                        clearable=False,
+                                    ),
+                                    style={
+                                        'display': 'none'
+                                    },  # invisible but present in layout
+                                ),
+                                dbc.Row(
                                     [
-                                        # Hidden store to trigger page load
-                                        dcc.Store(
-                                            id='gallery-page-load-trigger', data=True
-                                        ),
-                                        # Bucket selection
-                                        dbc.Row(
+                                        # === LEFT COLUMN (Selectors) ===
+                                        dbc.Col(
                                             [
-                                                dbc.Label(
-                                                    'Select Bucket:',
-                                                    width=4,
-                                                    className='fw-bold',
+                                                dcc.Store(
+                                                    id='gallery-page-load-trigger',
+                                                    data=True,
                                                 ),
-                                                dbc.Col(
-                                                    bucket_dropdown(
-                                                        layout_id='gallery-bucket-selector'
-                                                    ),
-                                                    width=8,
-                                                ),
-                                            ],
-                                            className='mb-3 align-items-center',
-                                        ),
-                                        # Target folder selection / creation
-                                        dbc.Row(
-                                            [
-                                                dbc.Label(
-                                                    'Select / Create Folder:',
-                                                    width=4,
-                                                    className='fw-bold',
-                                                ),
-                                                dbc.Col(
+                                                html.Div(
                                                     [
+                                                        dbc.Row(
+                                                            [
+                                                                dbc.Label(
+                                                                    'Select Bucket:',
+                                                                    width=4,
+                                                                    className='fw-bold',
+                                                                ),
+                                                                dbc.Col(
+                                                                    bucket_dropdown(
+                                                                        layout_id='gallery-bucket-selector'
+                                                                    ),
+                                                                    width=8,
+                                                                ),
+                                                            ],
+                                                            className='mb-3 align-items-center',
+                                                        ),
+                                                        dbc.Row(
+                                                            [
+                                                                dbc.Label(
+                                                                    'Select / Create Folder:',
+                                                                    width=4,
+                                                                    className='fw-bold',
+                                                                ),
+                                                                dbc.Col(
+                                                                    [
+                                                                        dcc.Dropdown(
+                                                                            id='gallery-folder-dropdown',
+                                                                            options=[
+                                                                                {
+                                                                                    'label': 'Root',
+                                                                                    'value': '',
+                                                                                }
+                                                                            ],
+                                                                            placeholder='Select existing folder',
+                                                                            value='',
+                                                                            searchable=True,
+                                                                            clearable=True,
+                                                                            style={
+                                                                                'marginBottom': '5px'
+                                                                            },
+                                                                        ),
+                                                                        dcc.Input(
+                                                                            id='gallery-new-folder-input',
+                                                                            type='text',
+                                                                            placeholder='Or type a new folder name',
+                                                                            style={
+                                                                                'width': '100%'
+                                                                            },
+                                                                        ),
+                                                                    ],
+                                                                    width=8,
+                                                                ),
+                                                            ],
+                                                            className='mb-3 align-items-center',
+                                                        ),
+                                                        dbc.Row(
+                                                            [
+                                                                dbc.Label(
+                                                                    'Select File Type:',
+                                                                    width=4,
+                                                                    className='fw-bold',
+                                                                ),
+                                                                dbc.Col(
+                                                                    dcc.Dropdown(
+                                                                        id='type-dropdown',
+                                                                        options=[
+                                                                            {
+                                                                                'label': 'Images',
+                                                                                'value': 'image',
+                                                                            },
+                                                                            {
+                                                                                'label': 'PDFs',
+                                                                                'value': 'pdf',
+                                                                            },
+                                                                            {
+                                                                                'label': 'Audio',
+                                                                                'value': 'audio',
+                                                                            },
+                                                                            {
+                                                                                'label': 'Video',
+                                                                                'value': 'video',
+                                                                            },
+                                                                            {
+                                                                                'label': 'Text',
+                                                                                'value': 'text',
+                                                                            },
+                                                                        ],
+                                                                        value='image',
+                                                                        clearable=False,
+                                                                    ),
+                                                                    width=8,
+                                                                ),
+                                                            ],
+                                                            className='mb-3 align-items-center',
+                                                        ),
                                                         dcc.Dropdown(
-                                                            id='gallery-folder-dropdown',
+                                                            id='map-view-dropdown',
                                                             options=[
                                                                 {
-                                                                    'label': 'Root',
-                                                                    'value': '',
+                                                                    'label': 'Current folder',
+                                                                    'value': 'folder',
                                                                 }
-                                                            ],  # root option
-                                                            placeholder='Select existing folder',
-                                                            value='',  # default to root
-                                                            searchable=True,
-                                                            clearable=True,
-                                                            style={
-                                                                'marginBottom': '5px'
-                                                            },
+                                                            ],
+                                                            value='folder',
+                                                            style={'display': 'none'},
                                                         ),
-                                                        dcc.Input(
-                                                            id='gallery-new-folder-input',
-                                                            type='text',
-                                                            placeholder='Or type a new folder name',
-                                                            style={'width': '100%'},
+                                                        dcc.Store(
+                                                            id='gallery-active-tab',
+                                                            storage_type='memory',
                                                         ),
                                                     ],
-                                                    width=8,
+                                                    style={
+                                                        'padding': '15px',
+                                                        'border': '1px solid #dee2e6',
+                                                        'borderRadius': '8px',
+                                                        'backgroundColor': '#f8f9fa',
+                                                    },
                                                 ),
                                             ],
-                                            className='mb-3 align-items-center',
+                                            xs=12,
+                                            md=6,  # ✅ Responsive: full width on phones, half on desktop
                                         ),
-                                        # File type selection
-                                        dbc.Row(
+                                        # === RIGHT COLUMN (Upload) ===
+                                        dbc.Col(
                                             [
-                                                dbc.Label(
-                                                    'Select File Type:',
-                                                    width=4,
-                                                    className='fw-bold',
-                                                ),
-                                                dbc.Col(
-                                                    dcc.Dropdown(
-                                                        id='type-dropdown',
-                                                        options=[
-                                                            {
-                                                                'label': 'Images',
-                                                                'value': 'image',
-                                                            },
-                                                            {
-                                                                'label': 'PDFs',
-                                                                'value': 'pdf',
-                                                            },
-                                                            {
-                                                                'label': 'Audio',
-                                                                'value': 'audio',
-                                                            },
-                                                            {
-                                                                'label': 'Video',
-                                                                'value': 'video',
-                                                            },
-                                                            {
-                                                                'label': 'Text',
-                                                                'value': 'text',
-                                                            },
-                                                        ],
-                                                        value='image',
-                                                        clearable=False,
-                                                    ),
-                                                    width=8,
-                                                ),
+                                                html.Div(
+                                                    build_upload_tab(),
+                                                    style={
+                                                        'padding': '15px',
+                                                        'border': '1px solid #dee2e6',
+                                                        'borderRadius': '8px',
+                                                        'backgroundColor': '#f8f9fa',
+                                                        'height': '100%',
+                                                    },
+                                                )
                                             ],
-                                            className='mb-3 align-items-center',
-                                        ),
-                                        dbc.Row(
-                                            [
-                                                dbc.Label(
-                                                    'Map View:',
-                                                    width=4,
-                                                    className='fw-bold',
-                                                ),
-                                                dbc.Col(
-                                                    dcc.Dropdown(
-                                                        id='map-view-dropdown',
-                                                        options=[
-                                                            {
-                                                                'label': 'Current folder',
-                                                                'value': 'folder',
-                                                            },
-                                                            {
-                                                                'label': 'All images in bucket',
-                                                                'value': 'all',
-                                                            },
-                                                        ],
-                                                        value='folder',  # default
-                                                        clearable=False,
-                                                    ),
-                                                    width=8,
-                                                ),
-                                            ],
-                                            className='mb-3 align-items-center',
+                                            xs=12,
+                                            md=6,  # ✅ Responsive: full width on phones, half on desktop
                                         ),
                                     ],
-                                    style={
-                                        'maxWidth': '600px',
-                                        'padding': '15px',
-                                        'border': '1px solid #dee2e6',
-                                        'borderRadius': '8px',
-                                        'backgroundColor': '#f8f9fa',
-                                    },
+                                    className='g-4 mb-4',  # spacing between columns
                                 ),
                                 html.Hr(),
-                                build_upload_tab(),
-                                html.Div(
-                                    id='bucket-gallery-container'
-                                ),  # This will hold the dynamic gallery
+                                html.Div(id='bucket-gallery-container'),
                                 html.Div(id='delete-status'),
                             ],
+                            style={'maxWidth': '1200px', 'margin': '0 auto'},
                         ),
                     ]
                 )
@@ -407,6 +436,7 @@ def filter_splitbox_folders(folders: list[str], username: str) -> list[str]:
     State({'type': 'rename-file-input', 'file_key': ALL}, 'value'),
     State({'type': 'move-folder-input', 'file_key': ALL}, 'value'),
     Input('map-view-dropdown', 'value'),
+    State('gallery-active-tab', 'data'),
     prevent_initial_call=True,
 )
 def manage_gallery(
@@ -423,10 +453,28 @@ def manage_gallery(
     rename_inputs,
     move_inputs,
     map_view,
+    active_tab,
 ):
     triggered = ctx.triggered_id
     delete_status = ''
     client = get_s3_client(bucket_name)
+
+    # Early exit if no bucket is selected
+    if not bucket_name:
+        msg = html.Div(
+            '⚠️ No bucket access now: please select a bucket or contact an admin.',
+            style={
+                'padding': '20px',
+                'backgroundColor': '#fff3cd',
+                'border': '1px solid #ffeeba',
+                'borderRadius': '6px',
+                'color': '#856404',
+                'fontWeight': 'bold',
+                'textAlign': 'center',
+            },
+        )
+        # empty string for delete_status, keep dropdown options empty
+        return msg, '', []
 
     if isinstance(triggered, dict) and triggered.get('type') == 'delete-file-btn':
         # DELETE
@@ -525,13 +573,13 @@ def manage_gallery(
     username = get_current_username(session)
 
     folders = list_s3_folders(client, bucket_name)
-    # ✅ Always skip system folders
+    # Always skip system folders
     filtered_folders = [f for f in folders if f not in ('thumbnails', '')]
 
-    # ✅ Enforce Splitbox restrictions
+    # Enforce Splitbox restrictions
     if bucket_name == 'splitbox-bucket':
         filtered_folders = filter_splitbox_folders(filtered_folders, username)
-        # ✅ Optional: default to a safe folder if none is selected
+        # Optional: default to a safe folder if none is selected
         if not folder:  # empty or None
             preferred = f'{username}/inputs'
             if any(f.startswith(preferred) for f in filtered_folders):
@@ -541,20 +589,21 @@ def manage_gallery(
 
     # Add explicit "Root" option at the top
     if bucket_name == 'splitbox-bucket':
-        # 🚫 No Root, only allowed folders
+        # No Root, only allowed folders
         folder_options = [{'label': f, 'value': f} for f in filtered_folders]
     else:
-        # ✅ Keep Root for normal buckets
+        # Keep Root for normal buckets
         folder_options = [{'label': 'Root', 'value': ''}] + [
             {'label': f, 'value': f} for f in filtered_folders
         ]
 
     if folder == '':
         if bucket_name == 'splitbox-bucket':
-            # 🚫 No root files for Splitbox
+            #  No root files for Splitbox
             all_files = []
         else:
             all_files = list_root_files(client, bucket_name)
+
     else:
         all_files = list_all_files(client, bucket_name, folder)
 
@@ -587,9 +636,12 @@ def manage_gallery(
         map_div = build_gallery_map_with_gps(images_with_gps)
 
         tabs = dcc.Tabs(
-            [
+            id='gallery-tabs',
+            value=active_tab or 'gallery',
+            children=[
                 dcc.Tab(
                     label='Gallery',
+                    value='gallery',
                     children=html.Div(
                         [
                             html.H5(f'Displaying images from folder: {folder_label}'),
@@ -599,8 +651,38 @@ def manage_gallery(
                 ),
                 dcc.Tab(
                     label='Map',
+                    value='map',
                     children=html.Div(
                         [
+                            dbc.Row(
+                                [
+                                    dbc.Label(
+                                        'Map View:',
+                                        width='auto',
+                                        className='fw-bold me-2',
+                                    ),
+                                    dbc.Col(
+                                        dcc.Dropdown(
+                                            id='map-view-dropdown',
+                                            options=[
+                                                {
+                                                    'label': 'Current folder',
+                                                    'value': 'folder',
+                                                },
+                                                {
+                                                    'label': 'All images in bucket',
+                                                    'value': 'all',
+                                                },
+                                            ],
+                                            value=map_view,
+                                            clearable=False,
+                                            style={'minWidth': '250px'},
+                                        ),
+                                        width='auto',
+                                    ),
+                                ],
+                                className='mb-3 align-items-center',
+                            ),
                             html.H5(
                                 'Displaying all images in bucket'
                                 if map_view == 'all'
@@ -610,7 +692,7 @@ def manage_gallery(
                         ]
                     ),
                 ),
-            ]
+            ],
         )
         container = tabs
     else:
@@ -684,7 +766,7 @@ def populate_upload_folder_options(bucket_name):
 def show_default_gallery(_):
     """Display default gallery for non-logged-in users with caching."""
     bucket_name = 'dashlab-bucket'
-    folder = ''  # root folder
+    folder = 'Images_to_Share'  # root folder
     file_type = 'image'  # default type
 
     client = get_s3_client(bucket_name)
@@ -706,11 +788,11 @@ def show_default_gallery(_):
 
     # --- Tabs for Gallery / Map ---
     folder_label = html.H5(
-        'Displaying files from root',
+        f'Displaying files from {folder}',
         style={'marginBottom': '10px', 'fontStyle': 'italic'},
     )
     map_label = html.H5(
-        'Displaying all images in bucket',
+        f'Displaying files from {folder}',
         style={'marginBottom': '10px', 'fontStyle': 'italic'},
     )
 
@@ -899,3 +981,12 @@ def update_selected_marker(clickData, fig):
         ]
     )
     return preview, fig
+
+
+@callback(
+    Output('gallery-active-tab', 'data'),
+    Input('gallery-tabs', 'value'),
+    prevent_initial_call=True,
+)
+def save_active_tab(current_tab):
+    return current_tab

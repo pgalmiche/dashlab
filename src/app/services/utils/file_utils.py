@@ -30,7 +30,6 @@ from functools import lru_cache
 from typing import Dict, List, Optional, Union
 
 import boto3
-import dash_bootstrap_components as dbc
 import plotly.graph_objects as go
 import requests
 from botocore.exceptions import BotoCoreError, ClientError
@@ -90,16 +89,6 @@ def get_s3_client(bucket_name: str):
         aws_secret_access_key=settings.aws_secret_access_key,
         region_name=region,
     )
-
-
-card_style = {
-    'backgroundColor': '#e9f5ff',  # custom light blue
-    'color': '#333333',  # text color
-    'borderRadius': '12px',
-    'boxShadow': '0 4px 12px rgba(0, 0, 0, 0.08)',
-    'padding': '20px',
-    'marginBottom': '20px',
-}
 
 
 def get_current_username(session) -> Optional[str]:
@@ -415,226 +404,6 @@ def thumbnail_exists(s3_client, bucket, key):
         return False
 
 
-def render_file_preview(
-    s3_client,
-    bucket_name: str,
-    file_key: str,
-    show_download: bool = True,
-    show_delete: bool = False,
-    allow_rename: bool = True,
-):
-    """
-    Render a professional and responsive file preview.
-    Uses a thumbnail for display if available,
-    but always provides a download link for the full-size original.
-    """
-    # --- Determine thumbnail (for display) ---
-    preview_key = file_key
-    if is_image(file_key):
-        thumbnail_key = get_thumbnail_key(file_key)
-        if thumbnail_exists(s3_client, bucket_name, thumbnail_key):
-            preview_key = thumbnail_key
-        else:
-            preview_key = file_key
-
-    # ✅ Thumbnail URL (for display)
-    preview_url = generate_presigned_url(s3_client, bucket_name, preview_key)
-    # ✅ Full-size original URL (for download)
-    original_url = generate_presigned_url(s3_client, bucket_name, file_key)
-
-    # --- Determine preview component ---
-    if is_image(file_key):
-        main_component = html.Img(
-            src=preview_url,
-            style={'width': '100%', 'height': 'auto', 'borderRadius': '6px'},
-        )
-    elif is_pdf(file_key):
-        main_component = html.Iframe(
-            src=preview_url,
-            style={
-                'width': '100%',
-                'height': '400px',
-                'borderRadius': '6px',
-                'border': '1px solid #ddd',
-            },
-        )
-    elif is_audio(file_key):
-        main_component = html.Audio(
-            src=preview_url, controls=True, style={'width': '100%'}
-        )
-    elif is_video(file_key):
-        main_component = html.Video(
-            src=preview_url,
-            controls=True,
-            style={'width': '100%', 'height': 'auto', 'borderRadius': '6px'},
-        )
-    elif file_key.endswith('_viz.json'):
-        safe_id = f"viz-{file_key.replace('/', '-')}"
-        main_component = html.Div(
-            [
-                dcc.Store(
-                    id={'type': 'viz-json-store', 'file_key': file_key},
-                    data=preview_url,
-                ),
-                html.Div(
-                    id=safe_id,
-                    style={'width': '100%', 'height': '400px'},
-                ),
-            ]
-        )
-    else:
-        main_component = html.Div(
-            'Preview not available',
-            style={
-                'padding': '20px',
-                'backgroundColor': '#f8f9fa',
-                'textAlign': 'center',
-                'borderRadius': '6px',
-            },
-        )
-
-    # --- Top line: Download + Delete ---
-    top_buttons = []
-    if show_download:
-        top_buttons.append(
-            dbc.Button(
-                '⬇ Download Original',
-                href=original_url,  # ✅ Always use the ORIGINAL for download
-                target='_blank',
-                color='success',
-                size='sm',
-                className='me-2 flex-grow-1',
-            )
-        )
-    if show_delete:
-        top_buttons.append(
-            dbc.Button(
-                '❌ Delete',
-                id={'type': 'delete-file-btn', 'file_key': file_key},
-                n_clicks=0,
-                color='danger',
-                size='sm',
-                className='flex-grow-1',
-            )
-        )
-
-    components = [
-        main_component,
-        html.Div(top_buttons, className='d-flex flex-wrap mt-2'),
-    ]
-
-    # --- Rename / Move section ---
-    if allow_rename:
-        edit_button = dbc.Button(
-            '✏ Rename / Move',
-            id={'type': 'show-rename-btn', 'file_key': file_key},
-            n_clicks=0,
-            color='primary',
-            size='sm',
-            className='mt-2 w-100',
-        )
-        rename_section = html.Div(
-            id={'type': 'rename-section', 'file_key': file_key},
-            style={'display': 'none', 'marginTop': '10px'},
-            children=[
-                dbc.Row(
-                    dbc.Col(
-                        dcc.Input(
-                            id={'type': 'rename-file-input', 'file_key': file_key},
-                            type='text',
-                            placeholder='New name (keep extension)',
-                            style={'width': '100%', 'marginBottom': '5px'},
-                        ),
-                        width=12,
-                    ),
-                    className='mb-2',
-                ),
-                dbc.Row(
-                    dbc.Col(
-                        dcc.Input(
-                            id={'type': 'move-folder-input', 'file_key': file_key},
-                            type='text',
-                            placeholder='Target folder (optional)',
-                            style={'width': '100%', 'marginBottom': '5px'},
-                        ),
-                        width=12,
-                    ),
-                    className='mb-2',
-                ),
-                dbc.Row(
-                    dbc.Col(
-                        dbc.Button(
-                            '💾 Save',
-                            id={'type': 'rename-file-btn', 'file_key': file_key},
-                            n_clicks=0,
-                            color='warning',
-                            size='sm',
-                            style={'width': '100%'},
-                        ),
-                        width=12,
-                    ),
-                ),
-            ],
-        )
-        components.extend([edit_button, rename_section])
-
-        filename = os.path.basename(file_key)
-        foldername = os.path.dirname(file_key) or 'Root'
-
-        components.append(
-            html.Div(
-                [
-                    html.Div(
-                        f'📁 Folder: {foldername}',
-                        style={
-                            'fontWeight': '600',
-                            'fontSize': '12px',
-                            'marginTop': '8px',
-                            'whiteSpace': 'nowrap',
-                            'overflow': 'hidden',
-                            'textOverflow': 'ellipsis',
-                            'width': '100%',
-                            'textAlign': 'center',
-                        },
-                        title=foldername,
-                    ),
-                    html.Div(
-                        f'🗂️ File: {filename}',
-                        style={
-                            'fontWeight': 'bold',
-                            'fontSize': '13px',
-                            'marginTop': '3px',
-                            'whiteSpace': 'nowrap',
-                            'overflow': 'hidden',
-                            'textOverflow': 'ellipsis',
-                            'width': '100%',
-                            'textAlign': 'center',
-                        },
-                        title=filename,
-                    ),
-                ]
-            )
-        )
-
-    return (
-        html.Div(
-            components,
-            style={
-                'margin': '10px 0',
-                'padding': '10px',
-                'border': '1px solid #ddd',
-                'borderRadius': '8px',
-                'backgroundColor': '#ffffff',
-                'width': '100%',
-                'maxWidth': '100%',
-            },
-        ),
-        '',
-        '',
-        '',
-    )
-
-
 def move_file_and_update_metadata(
     s3_client,
     bucket_name: str,
@@ -899,69 +668,6 @@ def filter_files_by_type(file_keys: List[str], file_type: str) -> List[str]:
     return [key for key in file_keys if type_check(key)]
 
 
-def build_gallery_layout(
-    s3_client,
-    bucket_name: str,
-    file_keys: list[str],
-    show_download=True,
-    show_delete=False,
-    allow_rename=True,
-) -> html.Div:
-
-    gallery_items = []
-
-    for key in file_keys:
-        display_component, tags_str, folder_name, _ = render_file_preview(
-            s3_client,
-            bucket_name,
-            key,
-            show_delete=show_delete,
-            show_download=show_download,
-            allow_rename=allow_rename,
-        )
-
-        item_div = html.Div(
-            [
-                display_component,
-                html.Div(
-                    tags_str,
-                    style={
-                        'fontStyle': 'italic',
-                        'fontSize': '12px',
-                        'textAlign': 'center',
-                    },
-                ),
-            ],
-            style={
-                'border': '1px solid #ddd',
-                'borderRadius': '8px',
-                'padding': '15px',  # slightly larger padding
-                'boxSizing': 'border-box',
-                'backgroundColor': '#fafafa',
-                'boxShadow': '2px 2px 5px rgba(0,0,0,0.1)',
-                'display': 'flex',
-                'flexDirection': 'column',
-                'alignItems': 'center',
-                'flex': '1 1 100%',  # full width on small screens
-                'maxWidth': '320px',  # slightly larger max width
-                'minWidth': '240px',  # slightly larger min width
-            },
-        )
-
-        gallery_items.append(item_div)
-
-    return html.Div(
-        gallery_items,
-        style={
-            'display': 'flex',
-            'flexWrap': 'wrap',
-            'gap': '20px',  # more space between cards
-            'justifyContent': 'center',
-            'width': '100%',
-        },
-    )
-
-
 def generate_presigned_uploads(s3_client, bucket_name, filenames, folder_name=''):
     presigned_posts = []
     for filename in filenames:
@@ -1118,7 +824,7 @@ def get_images_with_gps(
     - Lat/Lon are cached in S3 (thumbnails/gps_data.json).
     - Presigned URLs are generated on every call and NOT stored in S3.
     """
-    # ✅ First, check in-memory lat/lon cache
+    # First, check in-memory lat/lon cache
     cache_key = (bucket_name, tuple(sorted(file_keys)))
     if cache_key in _gps_mem_cache:
         # Re-use lat/lon but refresh URLs each call
@@ -1178,7 +884,7 @@ def get_images_with_gps(
             if gps_tags.get('GPSLongitudeRef', 'E') == 'W':
                 lon = -lon
 
-            # ✅ Store only coordinates in persistent cache
+            # Store only coordinates in persistent cache
             gps_cache[key] = {'lat': lat, 'lon': lon}
             updated = True
         except Exception as e:
@@ -1214,7 +920,7 @@ def get_images_with_gps(
             {'key': key, 'lat': data['lat'], 'lon': data['lon'], 'url': fresh_url}
         )
 
-    # ✅ Cache only coordinates in memory for faster subsequent calls
+    # Cache only coordinates in memory for faster subsequent calls
     _gps_mem_cache[cache_key] = coords_only
 
     return images_with_gps
@@ -1258,7 +964,7 @@ def build_gallery_map_with_gps(
             marker=go.scattermapbox.Marker(size=14, color=colors),
             hovertext=filenames,
             hoverinfo='text',
-            # ✅ Pass fresh presigned URLs as customdata for callbacks
+            # Pass fresh presigned URLs as customdata for callbacks
             customdata=urls,
         )
     )
@@ -1335,10 +1041,27 @@ def invalidate_s3_cache(bucket_name: str, folder_name: Optional[str] = None):
 
 
 def list_root_files(s3_client, bucket_name):
-    """Return only files at the root (top-level) of the bucket."""
-    response = s3_client.list_objects_v2(
-        Bucket=bucket_name,
-        Delimiter='/',
-    )
-    files = response.get('Contents', [])
-    return [obj['Key'] for obj in files if not obj['Key'].endswith('/')]
+    """
+    Return only files at the root (top-level) of the bucket.
+    If bucket_name is missing or inaccessible, return a message instead of raising.
+    """
+    # Check for a missing/empty bucket name first
+    if not bucket_name:
+        return {
+            'error': '⚠️ No bucket access now: please select a bucket or contact an admin.'
+        }
+
+    try:
+        response = s3_client.list_objects_v2(
+            Bucket=bucket_name,
+            Delimiter='/',
+        )
+        files = response.get('Contents', [])
+        return [obj['Key'] for obj in files if not obj['Key'].endswith('/')]
+
+    except Exception as e:
+        # Catch AWS/boto errors and return a clean message
+        print(f'S3 list error for bucket {bucket_name}: {e}')
+        return {
+            'error': '⚠️ No bucket access now: please try again later or contact an admin.'
+        }

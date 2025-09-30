@@ -12,7 +12,6 @@ from flask import jsonify, request, session
 from app.services.utils.file_utils import (
     _cached_list_files_in_s3,
     _presigned_cache,
-    card_style,
     delete_file_from_s3,
     get_allowed_folders_for_user,
     get_analysis_prefix,
@@ -22,9 +21,9 @@ from app.services.utils.file_utils import (
     list_files_in_s3,
     list_viz_files,
     move_file_and_update_metadata,
-    render_file_preview,
     upload_files_to_s3,
 )
+from app.services.utils.ui_utils import card_style, render_file_preview
 from config.logging import setup_logging
 from config.settings import settings
 
