@@ -436,7 +436,6 @@ def filter_splitbox_folders(folders: list[str], username: str) -> list[str]:
     State({'type': 'move-folder-input', 'file_key': ALL}, 'value'),
     Input('map-view-dropdown', 'value'),
     State('gallery-active-tab', 'data'),
-    Input('gallery-upload-complete', 'data'),
     prevent_initial_call=True,
 )
 def manage_gallery(
@@ -454,7 +453,6 @@ def manage_gallery(
     move_inputs,
     map_view,
     active_tab,
-    upload_completed,
 ):
     triggered = ctx.triggered_id
     delete_status = ''
@@ -476,10 +474,6 @@ def manage_gallery(
         )
         # empty string for delete_status, keep dropdown options empty
         return msg, '', []
-
-    if triggered == 'gallery-upload-complete':
-        # Force rebuild with current folder/bucket/type
-        triggered = 'confirm-upload-btn'  # reuse upload logic
 
     if isinstance(triggered, dict) and triggered.get('type') == 'delete-file-btn':
         # DELETE
