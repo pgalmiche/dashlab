@@ -920,15 +920,9 @@ def get_images_with_gps(
 def build_gallery_map_with_gps(
     images_with_gps: list[dict], selected_key: str | None = None
 ):
-    """
-    Build a Dash layout with a Mapbox scatter plot of images that have GPS coordinates.
-    - images_with_gps must contain dicts with keys: ['key', 'lat', 'lon', 'url']
-    - selected_key highlights the currently selected image (if any).
-    """
     if not images_with_gps:
-        return html.Div('No images with GPS data.')
+        return html.Div('No images with GPS data.', className='text-muted py-3')
 
-    # Filter to valid coordinates
     images_with_coords = [
         img
         for img in images_with_gps
@@ -936,7 +930,7 @@ def build_gallery_map_with_gps(
         and isinstance(img.get('lon'), (int, float))
     ]
     if not images_with_coords:
-        return html.Div('No images with GPS data.')
+        return html.Div('No images with GPS data.', className='text-muted py-3')
 
     # Prepare data
     lats = [img['lat'] for img in images_with_coords]
@@ -946,7 +940,7 @@ def build_gallery_map_with_gps(
     urls = [img['url'] for img in images_with_coords]
     colors = ['green' if key == selected_key else 'blue' for key in keys]
 
-    # Create the map figure
+    # Map figure
     fig = go.Figure(
         go.Scattermapbox(
             lat=lats,
@@ -955,7 +949,6 @@ def build_gallery_map_with_gps(
             marker=go.scattermapbox.Marker(size=14, color=colors),
             hovertext=filenames,
             hoverinfo='text',
-            # Pass fresh presigned URLs as customdata for callbacks
             customdata=urls,
         )
     )
@@ -968,35 +961,55 @@ def build_gallery_map_with_gps(
         ),
         margin={'r': 0, 't': 0, 'l': 0, 'b': 0},
         hovermode='closest',
+        autosize=True,
     )
 
-    # Layout container: map on the left, preview on the right
+    # Responsive flex container
     return html.Div(
         style={
             'display': 'flex',
-            'flexWrap': 'wrap',  # responsive wrapping on small screens
+            'flexWrap': 'wrap',
             'gap': '20px',
             'width': '100%',
+            'justifyContent': 'center',
+            'alignItems': 'flex-start',
         },
         children=[
-            dcc.Graph(
-                id='gallery-map',
-                figure=fig,
+            # Map
+            html.Div(
+                dcc.Graph(
+                    id='gallery-map',
+                    figure=fig,
+                    style={
+                        'width': '100%',
+                        'height': '45vh',
+                        'minWidth': '300px',
+                    },
+                    config={'displayModeBar': False, 'responsive': True},
+                ),
                 style={
-                    'flex': '2 1 400px',  # grow/shrink, base width 400px
+                    'flex': '2 1 0',  # take ~2/3 of width on desktop, shrink on mobile
                     'minWidth': '300px',
+                    'maxWidth': 'calc(100% - 350px)',  # leave room for preview
                 },
-                config={'displayModeBar': False},  # cleaner look
             ),
+            # Preview
             html.Div(
                 id='map-image-preview',
                 style={
-                    'flex': '1 1 300px',
-                    'minWidth': '200px',
+                    'flex': '1 1 300px',  # take ~1/3 of width on desktop
+                    'minWidth': '250px',
+                    'maxWidth': '350px',
+                    'height': '45vh',
                     'display': 'flex',
                     'alignItems': 'center',
                     'justifyContent': 'center',
                     'padding': '10px',
+                    'overflow': 'auto',
+                    'border': '1px solid #dee2e6',
+                    'borderRadius': '8px',
+                    'backgroundColor': '#f8f9fa',
+                    'flexDirection': 'column',
                 },
                 children='Click a marker to preview the image.',
             ),
