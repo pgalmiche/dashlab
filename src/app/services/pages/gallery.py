@@ -1,6 +1,5 @@
 import logging
 import os
-import uuid
 from datetime import datetime
 
 import dash
@@ -27,7 +26,11 @@ from app.services.utils.file_utils import (
     list_s3_folders,
     upload_files_to_s3,
 )
-from app.services.utils.ui_utils import bucket_dropdown, build_gallery_layout
+from app.services.utils.ui_utils import (
+    bucket_dropdown,
+    build_gallery_layout,
+    render_file_preview,
+)
 from config.logging import setup_logging
 from config.settings import settings
 
@@ -53,6 +56,7 @@ layout = html.Div(
                 html.Div(
                     id='gallery-auth-banner', className='mb-4'
                 ),  # Dynamic auth banner here
+                html.Div(id='fullscreen-preview-container', children=None),
                 html.Div(
                     dcc.Dropdown(
                         id='map-view-dropdown',
@@ -309,18 +313,6 @@ def update_auth_banner(_):
                                             'Choose which file types to display in the gallery view.',
                                             className='text-muted',
                                         ),
-                                        # hidden controls
-                                        dcc.Dropdown(
-                                            id='map-view-dropdown',
-                                            options=[
-                                                {
-                                                    'label': 'Current folder',
-                                                    'value': 'folder',
-                                                }
-                                            ],
-                                            value='folder',
-                                            style={'display': 'none'},
-                                        ),
                                         dcc.Store(
                                             id='gallery-active-tab',
                                             storage_type='memory',
@@ -494,11 +486,10 @@ def manage_gallery(
                 'textAlign': 'center',
             },
         )
-        # empty string for delete_status, keep dropdown options empty
         return msg, '', []
 
+    # DELETE
     if isinstance(triggered, dict) and triggered.get('type') == 'delete-file-btn':
-        # DELETE
         file_key = triggered['file_key']
         delete_file_from_s3(client, bucket_name, file_key)
         thumb_key = get_thumbnail_key(file_key)
@@ -506,15 +497,12 @@ def manage_gallery(
             delete_file_from_s3(client, bucket_name, thumb_key)
         except client.exceptions.NoSuchKey:
             pass
-
-        # 🔥 Force fresh data next call
         invalidate_s3_cache(bucket_name, folder)
         _presigned_cache.clear()
         _gps_mem_cache.clear()
-
         delete_status = f'Deleted {file_key} at {datetime.utcnow().isoformat()}'
 
-    # ---------- UPLOAD ----------
+    # UPLOAD
     elif triggered == 'confirm-upload-btn' and upload_contents:
         filenames_to_upload = original_filenames
         if renamed_filenames and len(renamed_filenames) == len(original_filenames):
@@ -526,7 +514,6 @@ def manage_gallery(
         upload_files_to_s3(
             client, bucket_name, upload_contents, filenames_to_upload, target_folder
         )
-
         invalidate_s3_cache(bucket_name, folder)
         _presigned_cache.clear()
 
@@ -536,7 +523,6 @@ def manage_gallery(
             for name in filenames_to_upload
             if name.lower().endswith(('.png', '.jpg', '.jpeg'))
         ]
-
         if new_image_files:
             images_with_gps = get_images_with_gps(client, bucket_name, new_image_files)
             for img in images_with_gps:
@@ -546,7 +532,7 @@ def manage_gallery(
                     'lon': img['lon'],
                 }
 
-    # ---------- RENAME / MOVE ----------
+    # RENAME / MOVE
     elif isinstance(triggered, dict) and triggered.get('type') == 'rename-file-btn':
         file_key = triggered['file_key']
         idx = [
@@ -556,7 +542,6 @@ def manage_gallery(
         ][0]
         new_name = rename_inputs[idx] if rename_inputs else None
         new_folder = move_inputs[idx] if move_inputs else folder or ''
-
         if new_name:
             ext = os.path.splitext(file_key)[1]
             base_folder = (
@@ -565,234 +550,222 @@ def manage_gallery(
             new_key = (
                 f'{base_folder}/{new_name}{ext}' if base_folder else f'{new_name}{ext}'
             )
-
             client.copy_object(
                 Bucket=bucket_name,
                 CopySource={'Bucket': bucket_name, 'Key': file_key},
                 Key=new_key,
             )
             client.delete_object(Bucket=bucket_name, Key=file_key)
-
             # Rename thumbnail
             old_thumb_key = get_thumbnail_key(file_key)
-            new_thumb_key = get_thumbnail_key(new_key)
-            try:
-                client.copy_object(
-                    Bucket=bucket_name,
-                    CopySource={'Bucket': bucket_name, 'Key': old_thumb_key},
-                    Key=new_thumb_key,
-                )
-                client.delete_object(Bucket=bucket_name, Key=old_thumb_key)
-            except client.exceptions.NoSuchKey:
-                pass
-
-            delete_status = f'Renamed/moved {file_key} → {new_key} at {datetime.utcnow().isoformat()}'
-
-        invalidate_s3_cache(bucket_name, folder)
-        _presigned_cache.clear()
-        _gps_mem_cache.clear()
+        new_thumb_key = get_thumbnail_key(new_key)
+        try:
+            client.copy_object(
+                Bucket=bucket_name,
+                CopySource={'Bucket': bucket_name, 'Key': old_thumb_key},
+                Key=new_thumb_key,
+            )
+            client.delete_object(Bucket=bucket_name, Key=old_thumb_key)
+        except client.exceptions.NoSuchKey:
+            pass
+        delete_status = (
+            f'Renamed/moved {file_key} → {new_key} at {datetime.utcnow().isoformat()}'
+        )
+        # ✅ Update folder variable so gallery refreshes correctly
+        folder = base_folder
 
     if folder is None:
         folder = ''  # root folder
-
     username = get_current_username(session)
 
     folders = list_s3_folders(client, bucket_name)
-    # Always skip system folders
     filtered_folders = [f for f in folders if f not in ('thumbnails', '')]
 
-    # Enforce Splitbox restrictions
+    # Splitbox restrictions
     if bucket_name == 'splitbox-bucket':
         filtered_folders = filter_splitbox_folders(filtered_folders, username)
-        # Optional: default to a safe folder if none is selected
-        if not folder:  # empty or None
+        if not folder:
             preferred = f'{username}/inputs'
-            if any(f.startswith(preferred) for f in filtered_folders):
-                folder = preferred
-            elif 'shared/' in filtered_folders:
-                folder = 'shared/'
+            folder = next(
+                (f for f in filtered_folders if f.startswith(preferred)), 'shared/'
+            )
 
-    # Add explicit "Root" option at the top
-    if bucket_name == 'splitbox-bucket':
-        # No Root, only allowed folders
-        folder_options = [{'label': f, 'value': f} for f in filtered_folders]
-    else:
-        # Keep Root for normal buckets
-        folder_options = [{'label': 'Root', 'value': ''}] + [
-            {'label': f, 'value': f} for f in filtered_folders
-        ]
+    # Folder options
+    folder_options = [{'label': f, 'value': f} for f in filtered_folders]
+    if bucket_name != 'splitbox-bucket':
+        folder_options = [{'label': 'Root', 'value': ''}] + folder_options
 
-    if folder == '':
-        if bucket_name == 'splitbox-bucket':
-            #  No root files for Splitbox
-            all_files = []
-        else:
-            all_files = list_root_files(client, bucket_name)
-
-    else:
-        all_files = list_all_files(client, bucket_name, folder)
-
+    # List files
+    all_files = (
+        list_root_files(client, bucket_name)
+        if folder == ''
+        else list_all_files(client, bucket_name, folder)
+    )
     filtered_files = filter_files_by_type(all_files, file_type)
-
     folder_label = folder or 'Root'
-
-    # Build gallery layout
     gallery_div = build_gallery_layout(
-        client, bucket_name, filtered_files, show_delete=True
+        client,
+        bucket_name,
+        filtered_files,
+        show_delete=True,
+        folder_options=folder_options,
     )
 
-    # Build GPS map
-    if file_type == 'image':
-        if map_view == 'all':
-            all_bucket_files = list_all_files(client, bucket_name)
-            image_files = [
-                f
-                for f in all_bucket_files
-                if f.lower().endswith(('.png', '.jpg', '.jpeg'))
-            ]
-        else:
-            image_files = [
-                f
-                for f in filtered_files
-                if f.lower().endswith(('.png', '.jpg', '.jpeg'))
-            ]
+    # --- Hidden map dropdown (always present in layout) ---
+    hidden_map_dropdown = html.Div(
+        dcc.Dropdown(
+            id='map-view-dropdown',
+            options=[
+                {'label': 'Current folder', 'value': 'folder'},
+                {'label': 'All images in bucket', 'value': 'all'},
+            ],
+            value='folder',
+            clearable=False,
+            style={'display': 'none'},  # hidden
+        )
+    )
 
+    # --- Build Map only for images ---
+    map_div = None
+    if file_type == 'image':
+        image_files = (
+            list_all_files(client, bucket_name, folder)
+            if map_view == 'all'
+            else filtered_files
+        )
+        image_files = [
+            f for f in image_files if f.lower().endswith(('.png', '.jpg', '.jpeg'))
+        ]
         images_with_gps = get_images_with_gps(client, bucket_name, image_files)
         map_div = build_gallery_map_with_gps(images_with_gps)
 
-        tabs = dcc.Tabs(
-            id='gallery-tabs',
-            value=active_tab or 'gallery',
-            children=[
-                dcc.Tab(
-                    label='Gallery',
-                    value='gallery',
-                    children=html.Div(
-                        dbc.Card(
-                            dbc.CardBody(
-                                [
-                                    html.H4(
-                                        f"📸 Gallery — {folder_label or 'Root Folder'}",
-                                        className='fw-bold mb-2',
-                                    ),
-                                    html.P(
-                                        'Browse and manage files in the selected folder. You can preview, rename, or delete them below.',
-                                        className='text-muted mb-4',
-                                    ),
-                                    html.Div(gallery_div),
-                                ]
+    # --- Build tabs ---
+    tabs_children = [
+        dcc.Tab(
+            label='Gallery',
+            value='gallery',
+            children=html.Div(
+                dbc.Card(
+                    dbc.CardBody(
+                        [
+                            html.H4(
+                                f'📸 Gallery — {folder_label}', className='fw-bold mb-2'
                             ),
-                            className='shadow-sm border-0 bg-light rounded-4 p-4',
-                            style={'width': '100%', 'margin': '0 auto'},
-                        ),
-                        className='py-4',
-                    ),
-                ),
-                dcc.Tab(
-                    label='Map',
-                    value='map',
-                    children=html.Div(
-                        dbc.Card(
-                            dbc.CardBody(
-                                [
-                                    html.H4('🗺️ Map View', className='fw-bold mb-2'),
-                                    html.P(
-                                        'Visualize image locations on an interactive map. '
-                                        'Switch between viewing the current folder or all images in the selected bucket.',
-                                        className='text-muted mb-4',
-                                    ),
-                                    dbc.Row(
-                                        [
-                                            dbc.Col(
-                                                dbc.Label(
-                                                    'Map Scope:',
-                                                    className='fw-bold me-2',
-                                                ),
-                                                width='auto',
-                                            ),
-                                            dbc.Col(
-                                                dcc.Dropdown(
-                                                    id='map-view-dropdown',
-                                                    options=[
-                                                        {
-                                                            'label': 'Current folder',
-                                                            'value': 'folder',
-                                                        },
-                                                        {
-                                                            'label': 'All images in bucket',
-                                                            'value': 'all',
-                                                        },
-                                                    ],
-                                                    value=map_view,
-                                                    clearable=False,
-                                                    style={
-                                                        'minWidth': '150px',
-                                                        'width': '100%',
-                                                    },
-                                                ),
-                                                width=True,
-                                            ),
-                                        ],
-                                        className='mb-4 align-items-center flex-wrap',
-                                    ),
-                                    # Map wrapper to constrain width
-                                    html.Div(
-                                        map_div,
-                                        style={
-                                            'display': 'flex',
-                                            'flexDirection': 'column',
-                                            'alignItems': 'center',
-                                            'width': '100%',
-                                            'margin': '0 auto',  # centers horizontally
-                                        },
-                                    ),
-                                ]
+                            html.P(
+                                'Browse and manage files in the selected folder. You can preview, rename, or delete them below.',
+                                className='text-muted mb-4',
                             ),
-                            className='shadow-sm border-0 bg-light rounded-4 p-4',
-                            style={'width': '100%', 'margin': '0 auto'},
-                        ),
-                        className='py-4',
+                            html.Div(gallery_div),
+                        ]
                     ),
+                    className='shadow-sm border-0 bg-light rounded-4 p-4',
+                    style={'width': '100%', 'margin': '0 auto'},
                 ),
-                dcc.Tab(
-                    label='Upload',
-                    value='upload',
-                    children=html.Div(
-                        dbc.Card(
-                            dbc.CardBody(
-                                [
-                                    html.H4(
-                                        '📤 Upload Files', className='fw-bold mb-2'
-                                    ),
-                                    html.P(
-                                        'Upload files to the selected folder. You can rename files before uploading and monitor the progress in real time.',
-                                        className='text-muted mb-4',
-                                    ),
-                                    html.Div(build_upload_tab()),
-                                ]
+                className='py-4',
+            ),
+        ),
+        dcc.Tab(
+            label='Upload',
+            value='upload',
+            children=html.Div(
+                dbc.Card(
+                    dbc.CardBody(
+                        [
+                            html.H4('📤 Upload Files', className='fw-bold mb-2'),
+                            html.P(
+                                'Upload files to the selected folder. You can rename files before uploading and monitor the progress in real time.',
+                                className='text-muted mb-4',
                             ),
-                            className='shadow-sm border-0 bg-light rounded-4 p-4',
-                            style={'width': '100%', 'margin': '0 auto'},
-                        ),
-                        className='py-4',
+                            html.Div(build_upload_tab()),
+                        ]
                     ),
+                    className='shadow-sm border-0 bg-light rounded-4 p-4',
+                    style={'width': '100%', 'margin': '0 auto'},
                 ),
-            ],
-        )
-        container = tabs
-    else:
-        container = html.Div(
-            [
-                html.H5(
-                    f'Displaying files from folder: {folder_label}',
-                    style={'marginBottom': '10px', 'fontStyle': 'italic'},
-                ),
-                gallery_div,
-            ]
-        )
+                className='py-4',
+            ),
+        ),
+    ]
 
-    # ✅ Force React to treat container as new
-    container = html.Div([container], key=str(uuid.uuid4()))
+    # --- Insert Map tab if we have images ---
+    if map_div:
+        map_tab = dcc.Tab(
+            label='Map',
+            value='map',
+            children=html.Div(
+                dbc.Card(
+                    dbc.CardBody(
+                        [
+                            html.H4('🗺️ Map View', className='fw-bold mb-2'),
+                            html.P(
+                                'Visualize image locations on an interactive map. Switch between viewing the current folder or all images in the selected bucket.',
+                                className='text-muted mb-4',
+                            ),
+                            dbc.Row(
+                                [
+                                    dbc.Col(
+                                        dbc.Label(
+                                            'Map Scope:', className='fw-bold me-2'
+                                        ),
+                                        width='auto',
+                                    ),
+                                    dbc.Col(
+                                        # Reference the hidden dropdown (value comes from hidden_map_dropdown)
+                                        dcc.Dropdown(
+                                            id='map-view-dropdown',
+                                            options=[
+                                                {
+                                                    'label': 'Current folder',
+                                                    'value': 'folder',
+                                                },
+                                                {
+                                                    'label': 'All images in bucket',
+                                                    'value': 'all',
+                                                },
+                                            ],
+                                            value=map_view,
+                                            clearable=False,
+                                            style={
+                                                'minWidth': '150px',
+                                                'width': '100%',
+                                            },
+                                        ),
+                                        width=True,
+                                    ),
+                                ],
+                                className='mb-4 align-items-center flex-wrap',
+                            ),
+                            html.Div(
+                                map_div,
+                                style={
+                                    'display': 'flex',
+                                    'flexDirection': 'column',
+                                    'alignItems': 'center',
+                                    'width': '100%',
+                                    'margin': '0 auto',
+                                },
+                            ),
+                        ]
+                    ),
+                    className='shadow-sm border-0 bg-light rounded-4 p-4',
+                    style={'width': '100%', 'margin': '0 auto'},
+                ),
+                className='py-4',
+            ),
+        )
+        tabs_children.insert(1, map_tab)
+
+    # --- Final container ---
+    container = html.Div(
+        [
+            hidden_map_dropdown,  # always include hidden dropdown
+            dcc.Tabs(
+                id='gallery-tabs',
+                value=active_tab or 'gallery',
+                children=tabs_children,
+            ),
+        ]
+    )
 
     return container, delete_status, folder_options
 
@@ -1079,3 +1052,48 @@ def update_selected_marker(clickData, fig):
 )
 def save_active_tab(current_tab):
     return current_tab
+
+
+@callback(
+    Output('fullscreen-preview-container', 'children'),
+    Input({'type': 'toggle-fullscreen-btn', 'file_key': ALL}, 'n_clicks'),
+    Input({'type': 'close-fullscreen-btn', 'file_key': ALL}, 'n_clicks'),
+    State('gallery-bucket-selector', 'value'),
+    prevent_initial_call=True,
+)
+def toggle_fullscreen(toggle_clicks, close_clicks, bucket_name):
+    triggered = ctx.triggered_id
+
+    # --- Ignore if no button clicked ---
+    if not triggered:
+        raise dash.exceptions.PreventUpdate
+
+    # --- Ensure bucket is selected ---
+    if not bucket_name:
+        return html.Div('⚠️ Select a bucket first.', style={'color': 'red'})
+
+    client = get_s3_client(bucket_name)
+
+    # --- Close fullscreen ---
+    if isinstance(triggered, dict) and triggered.get('type') == 'close-fullscreen-btn':
+        if sum(close_clicks or []) == 0:
+            raise dash.exceptions.PreventUpdate
+        return None  # clear container
+
+    # --- Open fullscreen ---
+    if isinstance(triggered, dict) and triggered.get('type') == 'toggle-fullscreen-btn':
+        if sum(toggle_clicks or []) == 0:
+            raise dash.exceptions.PreventUpdate
+        file_key = triggered['file_key']
+        preview_div = render_file_preview(
+            s3_client=client,
+            bucket_name=bucket_name,
+            file_key=file_key,
+            show_download=True,
+            show_delete=False,
+            allow_rename=False,
+            fullscreen=True,
+        )[0]
+        return preview_div
+
+    raise dash.exceptions.PreventUpdate

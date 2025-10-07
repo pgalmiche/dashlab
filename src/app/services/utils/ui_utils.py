@@ -187,38 +187,46 @@ def render_file_preview(
     show_download: bool = True,
     show_delete: bool = False,
     allow_rename: bool = True,
+    fullscreen: bool = False,
+    folder_options=None,
 ):
-    """
-    Render a professional and responsive file preview.
-    Uses a thumbnail for display if available,
-    but always provides a download link for the full-size original.
-    """
-    # --- Determine thumbnail (for display) ---
+
+    # --- Determine thumbnail ---
     preview_key = file_key
     if is_image(file_key):
         thumbnail_key = get_thumbnail_key(file_key)
         if thumbnail_exists(s3_client, bucket_name, thumbnail_key):
             preview_key = thumbnail_key
-        else:
-            preview_key = file_key
 
-    # Thumbnail URL (for display)
     preview_url = generate_presigned_url(s3_client, bucket_name, preview_key)
-    # Full-size original URL (for download)
     original_url = generate_presigned_url(s3_client, bucket_name, file_key)
 
-    # --- Determine preview component ---
+    # --- Main preview component ---
     if is_image(file_key):
-        main_component = html.Img(
-            src=preview_url,
-            style={'width': '100%', 'height': 'auto', 'borderRadius': '6px'},
+        main_component = html.Div(
+            html.Img(
+                src=preview_url,
+                style={
+                    'maxWidth': '100%',
+                    'maxHeight': '100%',
+                    'objectFit': 'contain',
+                    'borderRadius': '6px',
+                },
+            ),
+            style={
+                'display': 'flex',
+                'justifyContent': 'center',
+                'alignItems': 'center',
+                'width': '100%',
+                'height': 'auto',
+            },
         )
     elif is_pdf(file_key):
         main_component = html.Iframe(
             src=preview_url,
             style={
                 'width': '100%',
-                'height': '400px',
+                'height': '80vh',
                 'borderRadius': '6px',
                 'border': '1px solid #ddd',
             },
@@ -231,7 +239,7 @@ def render_file_preview(
         main_component = html.Video(
             src=preview_url,
             controls=True,
-            style={'width': '100%', 'height': 'auto', 'borderRadius': '6px'},
+            style={'width': '100%', 'maxHeight': '80vh', 'borderRadius': '6px'},
         )
     elif file_key.endswith('_viz.json'):
         safe_id = f"viz-{file_key.replace('/', '-')}"
@@ -241,10 +249,7 @@ def render_file_preview(
                     id={'type': 'viz-json-store', 'file_key': file_key},
                     data=preview_url,
                 ),
-                html.Div(
-                    id=safe_id,
-                    style={'width': '100%', 'height': '400px'},
-                ),
+                html.Div(id=safe_id, style={'width': '100%', 'height': '400px'}),
             ]
         )
     else:
@@ -258,146 +263,197 @@ def render_file_preview(
             },
         )
 
-    # --- Top line: Download + Delete ---
-    top_buttons = []
+    # --- Buttons row (centered, uniform, small) ---
+    buttons_row_children = []
+
     if show_download:
-        top_buttons.append(
-            dbc.Button(
-                '⬇ Download Original',
-                href=original_url,  # Always use the ORIGINAL for download
-                target='_blank',
-                color='success',
-                size='sm',
-                className='me-2 flex-grow-1',
+        buttons_row_children.append(
+            dbc.Col(
+                dbc.Button(
+                    '⬇',
+                    href=original_url,
+                    target='_blank',
+                    color='success',
+                    size='sm',
+                    className='w-100',
+                ),
+                width='auto',
             )
         )
     if show_delete:
-        top_buttons.append(
+        buttons_row_children.append(
+            dbc.Col(
+                dbc.Button(
+                    '❌',
+                    id={'type': 'delete-file-btn', 'file_key': file_key},
+                    n_clicks=0,
+                    color='danger',
+                    size='sm',
+                    className='w-100',
+                ),
+                width='auto',
+            )
+        )
+
+    buttons_row_children.append(
+        dbc.Col(
             dbc.Button(
-                '❌ Delete',
-                id={'type': 'delete-file-btn', 'file_key': file_key},
+                '⛶' if not fullscreen else '✖ Close',
+                id={
+                    'type': (
+                        'toggle-fullscreen-btn'
+                        if not fullscreen
+                        else 'close-fullscreen-btn'
+                    ),
+                    'file_key': file_key,
+                },
                 n_clicks=0,
-                color='danger',
+                color='secondary',
                 size='sm',
-                className='flex-grow-1',
-            )
+                className='w-100',
+            ),
+            width='auto',
         )
-
-    components = [
-        main_component,
-        html.Div(top_buttons, className='d-flex flex-wrap mt-2'),
-    ]
-
-    # --- Rename / Move section ---
-    if allow_rename:
-        edit_button = dbc.Button(
-            '✏ Rename / Move',
-            id={'type': 'show-rename-btn', 'file_key': file_key},
-            n_clicks=0,
-            color='primary',
-            size='sm',
-            className='mt-2 w-100',
-        )
-        rename_section = html.Div(
-            id={'type': 'rename-section', 'file_key': file_key},
-            style={'display': 'none', 'marginTop': '10px'},
-            children=[
-                dbc.Row(
-                    dbc.Col(
-                        dcc.Input(
-                            id={'type': 'rename-file-input', 'file_key': file_key},
-                            type='text',
-                            placeholder='New name (keep extension)',
-                            style={'width': '100%', 'marginBottom': '5px'},
-                        ),
-                        width=12,
-                    ),
-                    className='mb-2',
-                ),
-                dbc.Row(
-                    dbc.Col(
-                        dcc.Input(
-                            id={'type': 'move-folder-input', 'file_key': file_key},
-                            type='text',
-                            placeholder='Target folder (optional)',
-                            style={'width': '100%', 'marginBottom': '5px'},
-                        ),
-                        width=12,
-                    ),
-                    className='mb-2',
-                ),
-                dbc.Row(
-                    dbc.Col(
-                        dbc.Button(
-                            '💾 Save',
-                            id={'type': 'rename-file-btn', 'file_key': file_key},
-                            n_clicks=0,
-                            color='warning',
-                            size='sm',
-                            style={'width': '100%'},
-                        ),
-                        width=12,
-                    ),
-                ),
-            ],
-        )
-        components.extend([edit_button, rename_section])
-
-        filename = os.path.basename(file_key)
-        foldername = os.path.dirname(file_key) or 'Root'
-
-        components.append(
-            html.Div(
-                [
-                    html.Div(
-                        f'📁 Folder: {foldername}',
-                        style={
-                            'fontWeight': '600',
-                            'fontSize': '12px',
-                            'marginTop': '8px',
-                            'whiteSpace': 'nowrap',
-                            'overflow': 'hidden',
-                            'textOverflow': 'ellipsis',
-                            'width': '100%',
-                            'textAlign': 'center',
-                        },
-                        title=foldername,
-                    ),
-                    html.Div(
-                        f'🗂️ File: {filename}',
-                        style={
-                            'fontWeight': 'bold',
-                            'fontSize': '13px',
-                            'marginTop': '3px',
-                            'whiteSpace': 'nowrap',
-                            'overflow': 'hidden',
-                            'textOverflow': 'ellipsis',
-                            'width': '100%',
-                            'textAlign': 'center',
-                        },
-                        title=filename,
-                    ),
-                ]
-            )
-        )
-
-    return (
-        html.Div(
-            components,
-            style={
-                'margin': '10px 0',
-                'padding': '10px',
-                'border': '1px solid #ddd',
-                'borderRadius': '8px',
-                'backgroundColor': '#ffffff',
-                'width': '100%',
-                'maxWidth': '100%',
-            },
-        ),
-        '',
-        '',
-        '',
     )
+
+    buttons_row_children.append(
+        dbc.Col(
+            dbc.Button(
+                '✏',
+                id={'type': 'show-rename-btn', 'file_key': file_key},
+                n_clicks=0,
+                color='primary',
+                size='sm',
+                className='w-100',
+                style={'display': 'none'} if fullscreen else {},
+            ),
+            width='auto',
+        )
+    )
+
+    buttons_row = dbc.Row(
+        buttons_row_children, className='g-2 justify-content-center mt-2'
+    )
+
+    # --- Rename section (always rendered, empty if disallowed) ---
+    rename_section_children = []
+    if allow_rename:
+        rename_section_children = [
+            dbc.Row(
+                dbc.Col(
+                    dcc.Input(
+                        id={'type': 'rename-file-input', 'file_key': file_key},
+                        type='text',
+                        placeholder='New name (keep extension)',
+                        style={'width': '100%', 'marginBottom': '5px'},
+                    ),
+                    width=12,
+                ),
+                className='mb-2',
+            ),
+            dbc.Row(
+                dbc.Col(
+                    dcc.Dropdown(
+                        id={'type': 'move-folder-input', 'file_key': file_key},
+                        options=folder_options or [],
+                        placeholder='Target folder (optional)',
+                        clearable=True,
+                        style={'width': '100%', 'marginBottom': '5px'},
+                    ),
+                    width=12,
+                ),
+                className='mb-2',
+            ),
+            dbc.Row(
+                dbc.Col(
+                    dbc.Button(
+                        '💾 Save',
+                        id={'type': 'rename-file-btn', 'file_key': file_key},
+                        n_clicks=0,
+                        color='warning',
+                        size='sm',
+                        style={'width': '100%'},
+                    ),
+                    width=12,
+                )
+            ),
+        ]
+
+    rename_section = html.Div(
+        id={'type': 'rename-section', 'file_key': file_key},
+        style={'display': 'none', 'marginTop': '10px'},
+        children=rename_section_children,
+    )
+
+    # --- Container styling ---
+    container_style = {
+        'margin': '10px 0',
+        'padding': '10px',
+        'border': '1px solid #ddd',
+        'borderRadius': '8px',
+        'backgroundColor': '#ffffff',
+        'width': '100%',
+        'maxWidth': '100%',
+    }
+    if fullscreen:
+        container_style.update(
+            {
+                'position': 'fixed',
+                'top': 0,
+                'left': 0,
+                'width': '100%',
+                'height': '100%',
+                'zIndex': 9999,
+                'display': 'flex',
+                'flexDirection': 'column',
+                'alignItems': 'center',
+                'justifyContent': 'center',
+                'overflow': 'auto',
+                'padding': '20px',
+            }
+        )
+
+    # --- Assemble layout ---
+    components = [main_component, buttons_row, rename_section]
+
+    filename = os.path.basename(file_key)
+    foldername = os.path.dirname(file_key) or 'Root'
+    components.append(
+        html.Div(
+            [
+                html.Div(
+                    f'📁 Folder: {foldername}',
+                    style={
+                        'fontWeight': '600',
+                        'fontSize': '12px',
+                        'marginTop': '8px',
+                        'whiteSpace': 'nowrap',
+                        'overflow': 'hidden',
+                        'textOverflow': 'ellipsis',
+                        'width': '100%',
+                        'textAlign': 'center',
+                    },
+                    title=foldername,
+                ),
+                html.Div(
+                    f'🗂️ File: {filename}',
+                    style={
+                        'fontWeight': 'bold',
+                        'fontSize': '13px',
+                        'marginTop': '3px',
+                        'whiteSpace': 'nowrap',
+                        'overflow': 'hidden',
+                        'textOverflow': 'ellipsis',
+                        'width': '100%',
+                        'textAlign': 'center',
+                    },
+                    title=filename,
+                ),
+            ]
+        )
+    )
+
+    return html.Div(components, style=container_style), '', '', ''
 
 
 def build_gallery_layout(
@@ -407,6 +463,7 @@ def build_gallery_layout(
     show_download=True,
     show_delete=False,
     allow_rename=True,
+    folder_options=None,
 ) -> html.Div:
 
     gallery_items = []
@@ -419,6 +476,7 @@ def build_gallery_layout(
             show_delete=show_delete,
             show_download=show_download,
             allow_rename=allow_rename,
+            folder_options=folder_options,
         )
 
         preview_box = html.Div(
